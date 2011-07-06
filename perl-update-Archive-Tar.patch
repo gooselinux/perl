@@ -1,0 +1,204 @@
+diff -up perl-5.10.1/lib/Archive/Tar/bin/ptardiff.eee perl-5.10.1/lib/Archive/Tar/bin/ptardiff
+diff -up perl-5.10.1/lib/Archive/Tar/bin/ptar.eee perl-5.10.1/lib/Archive/Tar/bin/ptar
+diff -up perl-5.10.1/lib/Archive/Tar/Constant.pm.eee perl-5.10.1/lib/Archive/Tar/Constant.pm
+diff -up perl-5.10.1/lib/Archive/Tar/File.pm.eee perl-5.10.1/lib/Archive/Tar/File.pm
+--- perl-5.10.1/lib/Archive/Tar/File.pm.eee	2009-04-15 21:07:10.000000000 +0200
++++ perl-5.10.1/lib/Archive/Tar/File.pm	2009-09-10 13:36:48.000000000 +0200
+@@ -386,7 +386,7 @@ sub _prefix_and_file {
+     my @dirs = File::Spec->splitdir( $dirs );
+ 
+     ### so sometimes the last element is '' -- probably when trailing
+-    ### dir slashes are encountered... this is is of course pointless,
++    ### dir slashes are encountered... this is of course pointless,
+     ### so remove it
+     pop @dirs while @dirs and not length $dirs[-1];
+ 
+diff -up perl-5.10.1/lib/Archive/Tar.pm.eee perl-5.10.1/lib/Archive/Tar.pm
+--- perl-5.10.1/lib/Archive/Tar.pm.eee	2009-06-23 19:47:27.000000000 +0200
++++ perl-5.10.1/lib/Archive/Tar.pm	2010-02-17 22:39:08.000000000 +0100
+@@ -23,7 +23,7 @@ require Exporter;
+ use strict;
+ use vars qw[$DEBUG $error $VERSION $WARN $FOLLOW_SYMLINK $CHOWN $CHMOD
+             $DO_NOT_USE_PREFIX $HAS_PERLIO $HAS_IO_STRING $SAME_PERMISSIONS
+-            $INSECURE_EXTRACT_MODE @ISA @EXPORT
++            $INSECURE_EXTRACT_MODE $ZERO_PAD_NUMBERS @ISA @EXPORT
+          ];
+ 
+ @ISA                    = qw[Exporter];
+@@ -31,12 +31,13 @@ use vars qw[$DEBUG $error $VERSION $WARN
+ $DEBUG                  = 0;
+ $WARN                   = 1;
+ $FOLLOW_SYMLINK         = 0;
+-$VERSION                = "1.52";
++$VERSION                = "1.58";
+ $CHOWN                  = 1;
+ $CHMOD                  = 1;
+ $SAME_PERMISSIONS       = $> == 0 ? 1 : 0;
+ $DO_NOT_USE_PREFIX      = 0;
+ $INSECURE_EXTRACT_MODE  = 0;
++$ZERO_PAD_NUMBERS       = 0;
+ 
+ BEGIN {
+     use Config;
+@@ -117,7 +118,7 @@ sub new {
+ 
+     ### copying $tmpl here since a shallow copy makes it use the
+     ### same aref, causing for files to remain in memory always.
+-    my $obj = bless { _data => [ ], _file => 'Unknown' }, $class;
++    my $obj = bless { _data => [ ], _file => 'Unknown', _error => '' }, $class;
+ 
+     if (@_) {
+         unless ( $obj->read( @_ ) ) {
+@@ -317,6 +318,7 @@ sub _read_tar {
+     while( $handle->read( $chunk, HEAD ) ) {
+         ### IO::Zlib doesn't support this yet
+         my $offset = eval { tell $handle } || 'unknown';
++        $@ = '';
+ 
+         unless( $read++ ) {
+             my $gzip = GZIP_MAGIC_NUM;
+@@ -369,7 +371,7 @@ sub _read_tar {
+         }
+ 
+         ### ignore labels:
+-        ### http://www.gnu.org/manual/tar/html_node/tar_139.html
++        ### http://www.gnu.org/software/tar/manual/html_chapter/Media.html#SEC159
+         next if $entry->is_label;
+ 
+         if( length $entry->type and ($entry->is_file || $entry->is_longlink) ) {
+@@ -1273,7 +1275,7 @@ sub _format_tar_entry {
+     my $l = PREFIX_LENGTH; # is ambiguous otherwise...
+     substr ($prefix, 0, -$l) = "" if length $prefix >= PREFIX_LENGTH;
+ 
+-    my $f1 = "%06o"; my $f2  = "%11o";
++    my $f1 = "%06o"; my $f2  = $ZERO_PAD_NUMBERS ? "%011o" : "%11o";
+ 
+     ### this might be optimizable with a 'changed' flag in the file objects ###
+     my $tar = pack (
+@@ -1296,6 +1298,7 @@ sub _format_tar_entry {
+     );
+ 
+     ### add the checksum ###
++    my $checksum_fmt = $ZERO_PAD_NUMBERS ? "%06o\0" : "%06o\0";
+     substr($tar,148,7) = sprintf("%6o\0", unpack("%16C*",$tar));
+ 
+     return $tar;
+@@ -1445,6 +1448,10 @@ method call instead.
+         my $self    = shift;
+         my $msg     = $error = shift;
+         $longmess   = Carp::longmess($error);
++        if (ref $self) {
++            $self->{_error} = $error;
++            $self->{_longmess} = $longmess;
++        }
+ 
+         ### set Archive::Tar::WARN to 0 to disable printing
+         ### of errors
+@@ -1457,7 +1464,11 @@ method call instead.
+ 
+     sub error {
+         my $self = shift;
+-        return shift() ? $longmess : $error;
++        if (ref $self) {
++            return shift() ? $self->{_longmess} : $self->{_error};
++        } else {
++            return shift() ? $longmess : $error;
++        }
+     }
+ }
+ 
+@@ -1561,7 +1572,7 @@ Returns an iterator function that reads 
+ it all in memory.  Each time the function is called it will return the
+ next file in the tarball. The files are returned as
+ C<Archive::Tar::File> objects. The iterator function returns the
+-empty list once it has exhausted the the files contained.
++empty list once it has exhausted the files contained.
+ 
+ The second argument can be a hash reference with options, which are
+ identical to the arguments passed to C<read()>.
+@@ -1600,7 +1611,8 @@ sub iter {
+         return                  unless $handle; # handle exhausted?
+ 
+         ### read data, should only return file
+-        @data = @{ $class->_read_tar($handle, { %$opts, limit => 1 }) };
++        my $tarfile = $class->_read_tar($handle, { %$opts, limit => 1 });
++        @data = @$tarfile if ref $tarfile && ref $tarfile eq 'ARRAY';
+ 
+         ### return one piece of data
+         return shift(@data)     if @data;
+@@ -1817,6 +1829,11 @@ use is very much discouraged. Use the C<
+ 
+     warn $tar->error unless $tar->extract;
+ 
++Note that in older versions of this module, the C<error()> method
++would return an effectively global value even when called an instance
++method as above. This has since been fixed, and multiple instances of
++C<Archive::Tar> now have separate error strings.
++
+ =head2 $Archive::Tar::INSECURE_EXTRACT_MODE
+ 
+ This variable indicates whether C<Archive::Tar> should allow
+@@ -1860,6 +1877,13 @@ your perl to be able to  write stringifi
+ Don't change this variable unless you B<really> know what you're
+ doing.
+ 
++=head2 $Archive::Tar::ZERO_PAD_NUMBERS
++
++This variable holds a boolean indicating if we will create
++zero padded numbers for C<size>, C<mtime> and C<checksum>. 
++The default is C<0>, indicating that we will create space padded
++numbers. Added for compatibility with C<busybox> implementations.
++
+ =head1 FAQ
+ 
+ =over 4
+diff -up perl-5.10.1/lib/Archive/Tar/t/01_use.t.eee perl-5.10.1/lib/Archive/Tar/t/01_use.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/02_methods.t.eee perl-5.10.1/lib/Archive/Tar/t/02_methods.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/03_file.t.eee perl-5.10.1/lib/Archive/Tar/t/03_file.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/04_resolved_issues.t.eee perl-5.10.1/lib/Archive/Tar/t/04_resolved_issues.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/05_iter.t.eee perl-5.10.1/lib/Archive/Tar/t/05_iter.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/06_error.t.eee perl-5.10.1/lib/Archive/Tar/t/06_error.t
+--- perl-5.10.1/lib/Archive/Tar/t/06_error.t.eee	2010-03-04 11:10:25.329079386 +0100
++++ perl-5.10.1/lib/Archive/Tar/t/06_error.t	2009-09-10 13:40:20.000000000 +0200
+@@ -0,0 +1,39 @@
++BEGIN {
++    if( $ENV{PERL_CORE} ) {
++        chdir '../lib/Archive/Tar' if -d '../lib/Archive/Tar';
++    }       
++    use lib '../../..';
++}
++
++BEGIN { chdir 't' if -d 't' }
++
++use Test::More 'no_plan';
++use strict;
++use lib '../lib';
++
++use Archive::Tar;
++use File::Spec;
++
++$Archive::Tar::WARN = 0;
++
++my $t1 = Archive::Tar->new;
++my $t2 = Archive::Tar->new;
++
++is($Archive::Tar::error, "", "global error string is empty");
++is($t1->error, "", "error string of object 1 is empty");
++is($t2->error, "", "error string of object 2 is empty");
++
++ok(!$t1->read(), "can't read without a file");
++
++isnt($t1->error, "", "error string of object 1 is set");
++is($Archive::Tar::error, $t1->error, "global error string equals that of object 1");
++is($Archive::Tar::error, Archive::Tar->error, "the class error method returns the global error");
++is($t2->error, "", "error string of object 2 is still empty");
++
++my $src = File::Spec->catfile( qw[src short b] );
++ok(!$t2->read($src), "error when opening $src");
++
++isnt($t2->error, "", "error string of object 1 is set");
++isnt($t2->error, $t1->error, "error strings of objects 1 and 2 differ");
++is($Archive::Tar::error, $t2->error, "global error string equals that of object 2");
++is($Archive::Tar::error, Archive::Tar->error, "the class error method returns the global error");
+diff -up perl-5.10.1/lib/Archive/Tar/t/90_symlink.t.eee perl-5.10.1/lib/Archive/Tar/t/90_symlink.t
+diff -up perl-5.10.1/lib/Archive/Tar/t/99_pod.t.eee perl-5.10.1/lib/Archive/Tar/t/99_pod.t

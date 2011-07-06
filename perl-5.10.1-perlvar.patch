@@ -1,0 +1,22 @@
+diff -up perl-5.10.1/lib/Pod/Man.pm.ooo perl-5.10.1/lib/Pod/Man.pm
+diff -up perl-5.10.1/pod/perlvar.pod.ooo perl-5.10.1/pod/perlvar.pod
+--- perl-5.10.1/pod/perlvar.pod.ooo	2009-04-18 15:51:36.000000000 +0200
++++ perl-5.10.1/pod/perlvar.pod	2010-01-20 09:02:02.753745604 +0100
+@@ -248,7 +248,7 @@ the C</p> modifier.
+ 
+ =item $PREMATCH
+ 
+-=item $`
++=item C<$`>
+ X<$`> X<$PREMATCH>
+ 
+ The string preceding whatever was matched by the last successful
+@@ -271,7 +271,7 @@ the C</p> modifier.
+ 
+ =item $POSTMATCH
+ 
+-=item $'
++=item C<$'>
+ X<$'> X<$POSTMATCH>
+ 
+ The string following whatever was matched by the last successful

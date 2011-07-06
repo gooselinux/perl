@@ -1,0 +1,20 @@
+https://rt.cpan.org/Public/Bug/Display.html?id=58636
+
+--- perl-5.10.1/lib/Archive/Tar.pm.orig	2010-06-22 23:18:11.000000000 +0200
++++ perl-5.10.1/lib/Archive/Tar.pm	2010-06-23 10:16:42.000000000 +0200
+@@ -445,10 +445,11 @@ sub _read_tar {
+             next LOOP;
+         }
+ 
+-        $self->_extract_file( $entry ) if $extract
+-                                            && !$entry->is_longlink
+-                                            && !$entry->is_unknown
+-                                            && !$entry->is_label;
++        if ( $extract && !$entry->is_longlink
++                      && !$entry->is_unknown
++                      && !$entry->is_label ) {
++            $self->_extract_file( $entry ) or return;
++        }
+ 
+         ### Guard against tarfiles with garbage at the end
+ 	    last LOOP if $entry->name eq '';

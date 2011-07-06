@@ -1,0 +1,28 @@
+--- perl-5.8.8/pod/perl.pod.orig	2008-03-18 14:25:36.000000000 +0900
++++ perl-5.8.8/pod/perl.pod	2008-03-18 14:27:34.000000000 +0900
+@@ -204,11 +204,11 @@
+ 
+ 
+ By default, the manpages listed above are installed in the 
+-F</usr/local/man/> directory.  
++F</usr/share/man/> directory.  
+ 
+ Extensive additional documentation for Perl modules is available.  The
+ default configuration for perl will place this additional documentation
+-in the F</usr/local/lib/perl5/man> directory (or else in the F<man>
++in the F</usr/share/perl5> directory (or else in the F<man>
+ subdirectory of the Perl library directory).  Some of this additional
+ documentation is distributed standard with Perl, but you'll also find
+ documentation for third-party modules there.
+@@ -220,9 +220,9 @@
+ 
+     perl -V:man.dir
+ 
+-If the directories have a common stem, such as F</usr/local/man/man1>
+-and F</usr/local/man/man3>, you need only to add that stem
+-(F</usr/local/man>) to your man(1) configuration files or your MANPATH
++If the directories have a common stem, such as F</usr/share/man/man1>
++and F</usr/share/man/man3>, you need only to add that stem
++(F</usr/share/man>) to your man(1) configuration files or your MANPATH
+ environment variable.  If they do not share a stem, you'll have to add
+ both stems.

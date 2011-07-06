@@ -1,0 +1,4354 @@
+diff -up perl-5.10.1/lib/Pod/Simple/BlackBox.pm.ccc perl-5.10.1/lib/Pod/Simple/BlackBox.pm
+--- perl-5.10.1/lib/Pod/Simple/BlackBox.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/BlackBox.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -22,6 +22,9 @@ package Pod::Simple::BlackBox;
+ use integer; # vroom!
+ use strict;
+ use Carp ();
++use vars qw($VERSION );
++$VERSION = '3.13';
++#use constant DEBUG => 7;
+ BEGIN {
+   require Pod::Simple;
+   *DEBUG = \&Pod::Simple::DEBUG unless defined &DEBUG
+@@ -1369,8 +1372,19 @@ sub _ponder_Verbatim {
+   DEBUG and print " giving verbatim treatment...\n";
+ 
+   $para->[1]{'xml:space'} = 'preserve';
++
++  my $indent = $self->strip_verbatim_indent;
++  if ($indent && ref $indent eq 'CODE') {
++      my @shifted = (shift @{$para}, shift @{$para});
++      $indent = $indent->($para);
++      unshift @{$para}, @shifted;
++  }
++
+   for(my $i = 2; $i < @$para; $i++) {
+     foreach my $line ($para->[$i]) { # just for aliasing
++      # Strip indentation.
++      $line =~ s/^\E$indent// if $indent
++          && !($self->{accept_codes} && $self->{accept_codes}{VerbatimFormatted});
+       while( $line =~
+         # Sort of adapted from Text::Tabs -- yes, it's hardwired in that
+         # tabs are at every EIGHTH column.  For portability, it has to be
+@@ -1614,8 +1628,6 @@ sub _treelet_from_formatting_codes {
+   my $treelet = ['~Top', {'start_line' => $start_line},];
+   
+   unless ($preserve_space || $self->{'preserve_whitespace'}) {
+-    $para =~ s/\.  /\.\xA0 /g if $self->{'fullstop_space_harden'};
+-  
+     $para =~ s/\s+/ /g; # collapse and trim all whitespace first.
+     $para =~ s/ $//;
+     $para =~ s/^ //;
+@@ -1689,15 +1701,30 @@ sub _treelet_from_formatting_codes {
+     if(defined $1) {
+       if(defined $2) {
+         DEBUG > 3 and print "Found complex start-text code \"$1\"\n";
+-        push @stack, length($2) + 1; 
+-          # length of the necessary complex end-code string
++        # signal that we're looking for simple unless we're in complex.
++        if ($stack[-1]) {
++            # We're in complex already. It's just stuff.
++            DEBUG > 4 and print " It's just stuff.\n";
++            push @{ $lineage[-1] }, $1;
++        } else {
++            # length of the necessary complex end-code string
++            push @stack, length($2) + 1;
++            push @lineage, [ substr($1,0,1), {}, ];  # new node object
++            push @{ $lineage[-2] }, $lineage[-1];
++        }
+       } else {
+         DEBUG > 3 and print "Found simple start-text code \"$1\"\n";
+-        push @stack, 0;  # signal that we're looking for simple
++        if ($stack[-1]) {
++            # We're in complex already. It's just stuff.
++            DEBUG > 4 and print " It's just stuff.\n";
++            push @{ $lineage[-1] }, $1;
++        } else {
++            # signal that we're looking for simple.
++            push @stack, 0;
++            push @lineage, [ substr($1,0,1), {}, ];  # new node object
++            push @{ $lineage[-2] }, $lineage[-1];
++        }
+       }
+-      push @lineage, [ substr($1,0,1), {}, ];  # new node object
+-      push @{ $lineage[-2] }, $lineage[-1];
+-      
+     } elsif(defined $4) {
+       DEBUG > 3 and print "Found apparent complex end-text code \"$3$4\"\n";
+       # This is where it gets messy...
+@@ -1733,7 +1760,7 @@ sub _treelet_from_formatting_codes {
+       pop @lineage;
+       
+     } elsif(defined $5) {
+-      DEBUG > 3 and print "Found apparent simple end-text code \"$4\"\n";
++      DEBUG > 3 and print "Found apparent simple end-text code \"$5\"\n";
+ 
+       if(@stack and ! $stack[-1]) {
+         # We're indeed expecting a simple end-code
+diff -up perl-5.10.1/lib/Pod/Simple/Checker.pm.ccc perl-5.10.1/lib/Pod/Simple/Checker.pm
+--- perl-5.10.1/lib/Pod/Simple/Checker.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Checker.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -9,7 +9,7 @@ use Carp ();
+ use Pod::Simple::Methody ();
+ use Pod::Simple ();
+ use vars qw( @ISA $VERSION );
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ @ISA = ('Pod::Simple::Methody');
+ BEGIN { *DEBUG = defined(&Pod::Simple::DEBUG)
+           ? \&Pod::Simple::DEBUG
+@@ -152,9 +152,22 @@ This is a subclass of L<Pod::Simple> and
+ 
+ L<Pod::Simple>, L<Pod::Simple::Text>, L<Pod::Checker>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -165,7 +178,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Debug.pm.ccc perl-5.10.1/lib/Pod/Simple/Debug.pm
+--- perl-5.10.1/lib/Pod/Simple/Debug.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Debug.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -2,6 +2,8 @@
+ require 5;
+ package Pod::Simple::Debug;
+ use strict;
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ sub import {
+   my($value,$variable);
+@@ -130,11 +132,24 @@ is basically equivalent to this:
+ L<Pod::Simple>
+ 
+ The article "Constants in Perl", in I<The Perl Journal> issue
+-21.  See L<http://www.sysadminmag.com/tpj/issues/vol5_5/>
++21.  See L<http://interglacial.com/tpj/21/>
++
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -145,7 +160,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/DumpAsText.pm.ccc perl-5.10.1/lib/Pod/Simple/DumpAsText.pm
+--- perl-5.10.1/lib/Pod/Simple/DumpAsText.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/DumpAsText.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -1,7 +1,7 @@
+ 
+ require 5;
+ package Pod::Simple::DumpAsText;
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ use Pod::Simple ();
+ BEGIN {@ISA = ('Pod::Simple')}
+ 
+@@ -111,9 +111,22 @@ L<Pod::Simple::DumpAsXML>
+ 
+ L<Pod::Simple>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -124,7 +137,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/DumpAsXML.pm.ccc perl-5.10.1/lib/Pod/Simple/DumpAsXML.pm
+--- perl-5.10.1/lib/Pod/Simple/DumpAsXML.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/DumpAsXML.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -1,7 +1,7 @@
+ 
+ require 5;
+ package Pod::Simple::DumpAsXML;
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ use Pod::Simple ();
+ BEGIN {@ISA = ('Pod::Simple')}
+ 
+@@ -126,10 +126,22 @@ L<Pod::Simple>, L<Pod::Simple::DumpAsXML
+ 
+ The older libraries L<Pod::PXML>, L<Pod::XML>, L<Pod::SAX>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -140,7 +152,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
+ 
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/HTMLBatch.pm.ccc perl-5.10.1/lib/Pod/Simple/HTMLBatch.pm
+--- perl-5.10.1/lib/Pod/Simple/HTMLBatch.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/HTMLBatch.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -5,7 +5,7 @@ use strict;
+ use vars qw( $VERSION $HTML_RENDER_CLASS $HTML_EXTENSION
+  $CSS $JAVASCRIPT $SLEEPY $SEARCH_CLASS @ISA
+ );
+-$VERSION = '3.02';
++$VERSION = '3.13';
+ @ISA = ();  # Yup, we're NOT a subclass of Pod::Simple::HTML!
+ 
+ # TODO: nocontents stylesheets. Strike some of the color variations?
+@@ -37,6 +37,7 @@ $HTML_RENDER_CLASS ||= "Pod::Simple::HTM
+ Pod::Simple::_accessorize( __PACKAGE__,
+  'verbose', # how verbose to be during batch conversion
+  'html_render_class', # what class to use to render
++ 'search_class', # what to use to search for POD documents
+  'contents_file', # If set, should be the name of a file (in current directory)
+                   # to write the list of all modules to
+  'index', # will set $htmlpage->index(...) to this (true or false)
+@@ -71,6 +72,7 @@ sub go {
+ sub new {
+   my $new = bless {}, ref($_[0]) || $_[0];
+   $new->html_render_class($HTML_RENDER_CLASS);
++  $new->search_class($SEARCH_CLASS);
+   $new->verbose(1 + DEBUG);
+   $new->_contents([]);
+   
+@@ -246,9 +248,9 @@ sub _do_one_batch_conversion {
+   }
+ 
+   # Give each class a chance to init the converter:
+-  
+   $page->batch_mode_page_object_init($self, $module, $infile, $outfile, $depth)
+    if $page->can('batch_mode_page_object_init');
++  # Init for the index (TOC), too.
+   $self->batch_mode_page_object_init($page, $module, $infile, $outfile, $depth)
+    if $self->can('batch_mode_page_object_init');
+     
+@@ -532,7 +534,7 @@ sub modnames2paths { # return a hashref 
+ 
+   my $m2p;
+   {
+-    my $search = $SEARCH_CLASS->new;
++    my $search = $self->search_class->new;
+     DEBUG and print "Searching via $search\n";
+     $search->verbose(1) if DEBUG > 10;
+     $search->progress( $self->progress->copy->goal(0) ) if $self->progress;
+@@ -681,20 +683,16 @@ sub _gen_css_wad {
+    #  010=white_with_green_on_black
+    #  011=white_with_blue_on_black
+    #  100=white_with_red_on_black
+-  
+-   qw[
+-    110n=black_with_blue_on_white
+-    010n=black_with_magenta_on_white
+-    100n=black_with_cyan_on_white
+-
+-    101=white_with_purple_on_black
+-    001=white_with_navy_blue_on_black
+-
+-    010a=grey_with_green_on_black
+-    010b=white_with_green_on_grey
+-    101an=black_with_green_on_grey
+-    101bn=grey_with_green_on_white
+-  ]) {
++    '110n=blkbluw',  # black_with_blue_on_white
++    '010n=blkmagw',  # black_with_magenta_on_white
++    '100n=blkcynw',  # black_with_cyan_on_white
++    '101=whtprpk',   # white_with_purple_on_black
++    '001=whtnavk',   # white_with_navy_blue_on_black
++    '010a=grygrnk',  # grey_with_green_on_black
++    '010b=whtgrng',  # white_with_green_on_grey
++    '101an=blkgrng', # black_with_green_on_grey
++    '101bn=grygrnw', # grey_with_green_on_white
++  ) {
+ 
+     my $outname = $variation;
+     my($flipmode, @swap) = ( ($4 || ''), $1,$2,$3)
+@@ -724,11 +722,13 @@ sub _gen_css_wad {
+   }
+ 
+   # Now a few indexless variations:
+-  foreach my $variation (qw[
+-    black_with_blue_on_white  white_with_purple_on_black
+-    white_with_green_on_grey  grey_with_green_on_white
+-  ]) {
+-    my $outname = "indexless_$variation";
++  foreach my $variation (
++      'blkbluw', # black_with_blue_on_white
++      'whtpurk', # white_with_purple_on_black
++      'whtgrng', # white_with_green_on_grey
++      'grygrnw', # grey_with_green_on_white
++  ) {
++    my $outname = "$variation\_";
+     my $this_css = join "\n",
+       "/* This file is autogenerated.  Do not edit.  $outname */\n",
+       "\@import url(\"./_$variation.css\");",
+@@ -737,7 +737,7 @@ sub _gen_css_wad {
+     ;
+     my $name = $outname;    
+     $name =~ tr/-_/  /;
+-    $self->add_css( "_$outname.css", 0, $name, 0, 0, \$this_css);
++    $self->add_css( "$outname.css", 0, $name, 0, 0, \$this_css);
+   }
+ 
+   return;
+@@ -1275,6 +1275,14 @@ TODO
+ =item $batchconv->html_render_class( I<classname> );
+ 
+ This sets what class is used for rendering the files.
++The default is "Pod::Simple::HTML".  If you set it to something else,
++it should probably be a subclass of Pod::Simple::HTML, and you should
++C<require> or C<use> that class so that's it's loaded before
++Pod::Simple::HTMLBatch tries loading it.
++
++=item $batchconv->search_class( I<classname> );
++
++This sets what class is used for searching for the files.
+ The default is "Pod::Simple::Search".  If you set it to something else,
+ it should probably be a subclass of Pod::Simple::Search, and you should
+ C<require> or C<use> that class so that's it's loaded before
+@@ -1300,6 +1308,8 @@ TODO
+     $page->batch_mode_page_object_init($self, $module, $infile, $outfile, $depth)
+   or maybe override
+     $batchconv->batch_mode_page_object_init($page, $module, $infile, $outfile, $depth)
++  subclass Pod::Simple::Search and set $batchconv->search_class to
++    that classname
+ 
+ 
+ 
+@@ -1318,12 +1328,22 @@ you're looking for.
+ 
+ L<Pod::Simple>, L<Pod::Simple::HTMLBatch>, L<perlpod>, L<perlpodspec>
+ 
++=head1 SUPPORT
+ 
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
+ 
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2004 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -1334,9 +1354,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
+ 
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
+ 
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/HTMLLegacy.pm.ccc perl-5.10.1/lib/Pod/Simple/HTMLLegacy.pm
+diff -up perl-5.10.1/lib/Pod/Simple/HTML.pm.ccc perl-5.10.1/lib/Pod/Simple/HTML.pm
+--- perl-5.10.1/lib/Pod/Simple/HTML.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/HTML.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -5,12 +5,12 @@ use strict;
+ use Pod::Simple::PullParser ();
+ use vars qw(
+   @ISA %Tagmap $Computerese $LamePad $Linearization_Limit $VERSION
+-  $Perldoc_URL_Prefix $Perldoc_URL_Postfix
++  $Perldoc_URL_Prefix $Perldoc_URL_Postfix $Man_URL_Prefix $Man_URL_Postfix
+   $Title_Prefix $Title_Postfix $HTML_EXTENSION %ToIndex
+   $Doctype_decl  $Content_decl
+ );
+ @ISA = ('Pod::Simple::PullParser');
+-$VERSION = '3.03';
++$VERSION = '3.13';
+ 
+ use UNIVERSAL ();
+ BEGIN {
+@@ -37,6 +37,10 @@ $Perldoc_URL_Prefix  = 'http://search.cp
+ $Perldoc_URL_Postfix = ''
+  unless defined $Perldoc_URL_Postfix;
+ 
++
++$Man_URL_Prefix  = 'http://man.he.net/man';
++$Man_URL_Postfix = '';
++
+ $Title_Prefix  = '' unless defined $Title_Prefix;
+ $Title_Postfix = '' unless defined $Title_Postfix;
+ %ToIndex = map {; $_ => 1 } qw(head1 head2 head3 head4 ); # item-text
+@@ -52,6 +56,12 @@ __PACKAGE__->_accessorize(
+  'perldoc_url_postfix',
+    # what to put after "Foo%3a%3aBar" in the URL.  Normally "".
+ 
++ 'man_url_prefix',
++   # In turning L<crontab(5)> into http://whatever/man/1/crontab, what
++   #  to put before the "1/crontab".
++ 'man_url_postfix',
++   #  what to put after the "1/crontab" in the URL. Normally "".
++
+  'batch_mode', # whether we're in batch mode
+  'batch_mode_current_level',
+     # When in batch mode, how deep the current module is: 1 for "LWP",
+@@ -60,6 +70,8 @@ __PACKAGE__->_accessorize(
+  'title_prefix',  'title_postfix',
+   # What to put before and after the title in the head.
+   # Should already be &-escaped
++
++ 'html_h_level',
+   
+  'html_header_before_title',
+  'html_header_after_title',
+@@ -180,6 +192,8 @@ sub new {
+ 
+   $new->perldoc_url_prefix(  $Perldoc_URL_Prefix  );
+   $new->perldoc_url_postfix( $Perldoc_URL_Postfix );
++  $new->man_url_prefix(  $Man_URL_Prefix  );
++  $new->man_url_postfix( $Man_URL_Postfix );
+   $new->title_prefix(  $Title_Prefix  );
+   $new->title_postfix( $Title_Postfix );
+ 
+@@ -196,9 +210,25 @@ sub new {
+   $new->html_footer( qq[\n<!-- end doc -->\n\n</body></html>\n] );
+ 
+   $new->{'Tagmap'} = {%Tagmap};
++
+   return $new;
+ }
+ 
++sub __adjust_html_h_levels {
++  my ($self) = @_;
++  my $Tagmap = $self->{'Tagmap'};
++
++  my $add = $self->html_h_level;
++  return unless defined $add;
++  return if ($self->{'Adjusted_html_h_levels'}||0) == $add;
++
++  $add -= 1;
++  for (1 .. 4) {
++    $Tagmap->{"head$_"}  =~ s/$_/$_ + $add/e;
++    $Tagmap->{"/head$_"} =~ s/$_/$_ + $add/e;
++  }
++}
++
+ sub batch_mode_page_object_init {
+   my($self, $batchconvobj, $module, $infile, $outfile, $depth) = @_;
+   DEBUG and print "Initting $self\n  for $module\n",
+@@ -408,7 +438,7 @@ sub index_as_html {
+     $indent = '  '  x $level;
+     push @out, sprintf
+       "%s<li class='indexItem indexItem%s'><a href='#%s'>%s</a>",
+-      $indent, $level, $anchorname, esc($text)
++      $indent, $level, esc($anchorname), esc($text)
+     ;
+   }
+   push @out, "</div>\n";
+@@ -421,6 +451,8 @@ sub _do_middle_main_loop {
+   my $self = $_[0];
+   my $fh = $self->{'output_fh'};
+   my $tagmap = $self->{'Tagmap'};
++
++  $self->__adjust_html_h_levels;
+   
+   my($token, $type, $tagname, $linkto, $linktype);
+   my @stack;
+@@ -457,7 +489,8 @@ sub _do_middle_main_loop {
+         }
+ 
+         my $name = $self->linearize_tokens(@to_unget);
+-        
++        $name = $self->do_section($name, $token) if defined $name;
++
+         print $fh "<a ";
+         print $fh "class='u' href='#___top' title='click to go to top of document'\n"
+          if $tagname =~ m/^head\d$/s;
+@@ -487,7 +520,7 @@ sub _do_middle_main_loop {
+           next;
+         }
+         DEBUG and print "    raw text ", $next->text, "\n";
+-        printf $fh "\n" . $next->text . "\n";
++        print $fh "\n" . $next->text . "\n";
+         next;
+        
+       } else {
+@@ -512,7 +545,7 @@ sub _do_middle_main_loop {
+         $stack[-1] = $tagmap->{"/$tagname"};
+         if( $tagname eq 'item-text' and defined(my $next = $self->get_token) ) {
+           $self->unget_token($next);
+-          if( $next->type eq 'start' and $next->tagname !~ m/^item-/s ) {
++          if( $next->type eq 'start' ) {
+             print $fh $tagmap->{"/item-text"},$tagmap->{"item-body"};
+             $stack[-1] = $tagmap->{"/item-body"};
+           }
+@@ -536,6 +569,11 @@ sub _do_middle_main_loop {
+ ###########################################################################
+ #
+ 
++sub do_section {
++  my($self, $name, $token) = @_;
++  return $name;
++}
++
+ sub do_link {
+   my($self, $token) = @_;
+   my $type = $token->attr('type');
+@@ -554,9 +592,20 @@ sub do_link {
+ 
+ sub do_url_link { return $_[1]->attr('to') }
+ 
+-sub do_man_link { return undef }
+- # But subclasses are welcome to override this if they have man
+- #  pages somewhere URL-accessible.
++sub do_man_link {
++  my ($self, $link) = @_;
++  my $to = $link->attr('to');
++  my $frag = $link->attr('section');
++
++  return undef unless defined $to and length $to; # should never happen
++
++  $frag = $self->section_escape($frag)
++   if defined $frag and length($frag .= ''); # (stringify)
++
++  DEBUG and print "Resolving \"$to/$frag\"\n\n";
++
++  return $self->resolve_man_page_link($to, $frag);
++}
+ 
+ 
+ sub do_pod_link {
+@@ -646,6 +695,7 @@ sub section_name_tidy {
+ 
+ sub section_url_escape  { shift->general_url_escape(@_) }
+ sub pagepath_url_escape { shift->general_url_escape(@_) }
++sub manpage_url_escape  { shift->general_url_escape(@_) }
+ 
+ sub general_url_escape {
+   my($self, $string) = @_;
+@@ -719,6 +769,18 @@ sub batch_mode_rectify_path {
+   return;
+ }
+ 
++sub resolve_man_page_link {
++  my ($self, $to, $frag) = @_;
++  my ($page, $section) = $to =~ /^([^(]+)(?:[(](\d+)[)])?$/;
++
++  return undef unless defined $page and length $page;
++  $section ||= 1;
++
++  return $self->man_url_prefix . "$section/"
++      . $self->manpage_url_escape($page)
++      . $self->man_url_postfix;
++}
++
+ #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+ sub resolve_pod_link_by_table {
+@@ -858,21 +920,29 @@ maybe override do_pod_link
+ 
+ maybe override do_beginning do_end
+ 
+-
+-
+ =head1 SEE ALSO
+ 
+ L<Pod::Simple>, L<Pod::Simple::HTMLBatch>
+ 
+-
+ TODO: a corpus of sample Pod input and HTML output?  Or common
+ idioms?
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
+ 
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002-2004 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002-2004 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -881,9 +951,29 @@ This program is distributed in the hope 
+ without any warranty; without even the implied warranty of
+ merchantability or fitness for a particular purpose.
+ 
++=head1 ACKNOWLEDGEMENTS
++
++Thanks to L<Hurricane Electrict|http://he.net/> for permission to use its
++L<Linux man pages online|http://man.he.net/> site for man page links.
++
++Thanks to L<search.cpan.org|http://search.cpan.org/> for permission to use the
++site for Perl module links.
++
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
+ 
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/LinkSection.pm.ccc perl-5.10.1/lib/Pod/Simple/LinkSection.pm
+--- perl-5.10.1/lib/Pod/Simple/LinkSection.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/LinkSection.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -2,9 +2,13 @@
+ require 5;
+ package Pod::Simple::LinkSection;
+   # Based somewhat dimly on Array::Autojoin
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ use strict;
+ use Pod::Simple::BlackBox;
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ use overload( # So it'll stringify nice
+   '""'   => \&Pod::Simple::BlackBox::stringify_lol,
+@@ -126,9 +130,22 @@ Output:
+ 
+ L<Pod::Simple>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2004 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -139,7 +156,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Methody.pm.ccc perl-5.10.1/lib/Pod/Simple/Methody.pm
+--- perl-5.10.1/lib/Pod/Simple/Methody.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Methody.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -4,7 +4,7 @@ package Pod::Simple::Methody;
+ use strict;
+ use Pod::Simple ();
+ use vars qw(@ISA $VERSION);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ @ISA = ('Pod::Simple');
+ 
+ # Yes, we could use named variables, but I want this to be impose
+@@ -108,9 +108,22 @@ See the source for Pod::Simple::Text for
+ 
+ L<Pod::Simple>, L<Pod::Simple::Subclassing>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -121,7 +134,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Progress.pm.ccc perl-5.10.1/lib/Pod/Simple/Progress.pm
+--- perl-5.10.1/lib/Pod/Simple/Progress.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Progress.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -1,7 +1,7 @@
+ 
+ require 5;
+ package Pod::Simple::Progress;
+-$VERSION = "1.01";
++$VERSION = '3.13';
+ use strict;
+ 
+ # Objects of this class are used for noting progress of an
+diff -up perl-5.10.1/lib/Pod/Simple/PullParserEndToken.pm.ccc perl-5.10.1/lib/Pod/Simple/PullParserEndToken.pm
+--- perl-5.10.1/lib/Pod/Simple/PullParserEndToken.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/PullParserEndToken.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -2,8 +2,10 @@
+ require 5;
+ package Pod::Simple::PullParserEndToken;
+ use Pod::Simple::PullParserToken ();
+-@ISA = ('Pod::Simple::PullParserToken');
+ use strict;
++use vars qw(@ISA $VERSION);
++@ISA = ('Pod::Simple::PullParserToken');
++$VERSION = '3.13';
+ 
+ sub new {  # Class->new(tagname);
+   my $class = shift;
+@@ -74,9 +76,22 @@ Pod::Simple::PullParserEndToken->new( I<
+ 
+ L<Pod::Simple::PullParserToken>, L<Pod::Simple>, L<Pod::Simple::Subclassing>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -87,7 +102,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
+ 
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/PullParser.pm.ccc perl-5.10.1/lib/Pod/Simple/PullParser.pm
+--- perl-5.10.1/lib/Pod/Simple/PullParser.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/PullParser.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -1,7 +1,7 @@
+ 
+ require 5;
+ package Pod::Simple::PullParser;
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ use Pod::Simple ();
+ BEGIN {@ISA = ('Pod::Simple')}
+ 
+@@ -319,6 +319,7 @@ sub _get_titled_section {
+   my $desperate_for_title  = delete $options{'desperate'};
+   my $accept_verbatim      = delete $options{'accept_verbatim'};
+   my $max_content_length   = delete $options{'max_content_length'};
++  my $nocase               = delete $options{'nocase'};
+   $max_content_length = 120 unless defined $max_content_length;
+ 
+   Carp::croak( "Unknown " . ((1 == keys %options) ? "option: " : "options: ")
+@@ -366,6 +367,7 @@ sub _get_titled_section {
+         $head1_text_content .= $token->text;
+       } elsif( $token->is_end and $token->tagname eq 'head1' ) {
+         DEBUG and print "  Found end of head1.  Considering content...\n";
++        $head1_text_content = uc $head1_text_content if $nocase;
+         if($head1_text_content eq $titlename
+           or $head1_text_content =~ m/\($titlename_re\)/s
+           # We accept "=head1 Nomen Modularis (NAME)" for sake of i18n
+@@ -626,7 +628,15 @@ For example, suppose you have a document
+   Hoo::Boy::Wowza -- Stuff B<wow> yeah!
+ 
+ $parser->get_title on that document will return "Hoo::Boy::Wowza --
+-Stuff wow yeah!".
++Stuff wow yeah!". If the document starts with:
++
++  =head1 Name
++  
++  Hoo::Boy::W00t -- Stuff B<w00t> yeah!
++
++Then you'll need to pass the C<nocase> option in order to recognize "Name":
++
++  $parser->get_title(nocase => 1);
+ 
+ In cases where get_title can't find the title, it will return empty-string
+ ("").
+@@ -652,7 +662,15 @@ But if the document starts out:
+   Hooboy, stuff B<wow> yeah!
+ 
+ then $parser->get_short_title on that document will return "Hooboy,
+-stuff wow yeah!".
++stuff wow yeah!". If the document starts with:
++
++  =head1 Name
++  
++  Hoo::Boy::W00t -- Stuff B<w00t> yeah!
++
++Then you'll need to pass the C<nocase> option in order to recognize "Name":
++
++  $parser->get_short_title(nocase => 1);
+ 
+ If the title can't be found, then get_short_title returns empty-string
+ ("").
+@@ -661,22 +679,30 @@ If the title can't be found, then get_sh
+ 
+ This works like get_title except that it returns the contents of the
+ "=head1 AUTHOR\n\nParagraph...\n" section, assuming that that section
+-isn't terribly long.
++isn't terribly long. To recognize a "=head1 Author\n\nParagraph\n"
++section, pass the C<nocase> otpion:
++
++  $parser->get_author(nocase => 1);
+ 
+ (This method tolerates "AUTHORS" instead of "AUTHOR" too.)
+ 
+ =item $description_name = $parser->get_description
+ 
+ This works like get_title except that it returns the contents of the
+-"=head1 PARAGRAPH\n\nParagraph...\n" section, assuming that that section
+-isn't terribly long.
++"=head1 DESCRIPTION\n\nParagraph...\n" section, assuming that that section
++isn't terribly long. To recognize a "=head1 Description\n\nParagraph\n"
++section, pass the C<nocase> otpion:
++
++  $parser->get_description(nocase => 1);
+ 
+ =item $version_block = $parser->get_version
+ 
+ This works like get_title except that it returns the contents of
+ the "=head1 VERSION\n\n[BIG BLOCK]\n" block.  Note that this does NOT
+-return the module's C<$VERSION>!!
++return the module's C<$VERSION>!! To recognize a
++"=head1 Version\n\n[BIG BLOCK]\n" section, pass the C<nocase> otpion:
+ 
++  $parser->get_version(nocase => 1);
+ 
+ =back
+ 
+@@ -702,9 +728,22 @@ L<Pod::Simple::PullParserEndToken>.
+ 
+ L<HTML::TokeParser>, which inspired this.
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -715,12 +754,22 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
+ 
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
+ 
++=item * David E. Wheeler C<dwheeler@cpan.org>
+ 
++=back
++
++=cut
+ JUNK:
+ 
+ sub _old_get_title {  # some witchery in here
+diff -up perl-5.10.1/lib/Pod/Simple/PullParserStartToken.pm.ccc perl-5.10.1/lib/Pod/Simple/PullParserStartToken.pm
+--- perl-5.10.1/lib/Pod/Simple/PullParserStartToken.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/PullParserStartToken.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -2,8 +2,10 @@
+ require 5;
+ package Pod::Simple::PullParserStartToken;
+ use Pod::Simple::PullParserToken ();
+-@ISA = ('Pod::Simple::PullParserToken');
+ use strict;
++use vars qw(@ISA $VERSION);
++@ISA = ('Pod::Simple::PullParserToken');
++$VERSION = '3.13';
+ 
+ sub new {  # Class->new(tagname, optional_attrhash);
+   my $class = shift;
+@@ -111,9 +113,26 @@ Pod::Simple::PullParserStartToken->new( 
+ 
+ L<Pod::Simple::PullParserToken>, L<Pod::Simple>, L<Pod::Simple::Subclassing>
+ 
++=head1 SEE ALSO
++
++L<Pod::Simple::PullParserToken>, L<Pod::Simple>, L<Pod::Simple::Subclassing>
++
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -124,7 +143,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
+ 
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/PullParserTextToken.pm.ccc perl-5.10.1/lib/Pod/Simple/PullParserTextToken.pm
+--- perl-5.10.1/lib/Pod/Simple/PullParserTextToken.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/PullParserTextToken.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -2,8 +2,10 @@
+ require 5;
+ package Pod::Simple::PullParserTextToken;
+ use Pod::Simple::PullParserToken ();
+-@ISA = ('Pod::Simple::PullParserToken');
+ use strict;
++use vars qw(@ISA $VERSION);
++@ISA = ('Pod::Simple::PullParserToken');
++$VERSION = '3.13';
+ 
+ sub new {  # Class->new(text);
+   my $class = shift;
+@@ -82,9 +84,22 @@ Pod::Simple::PullParserTextToken->new( I
+ 
+ L<Pod::Simple::PullParserToken>, L<Pod::Simple>, L<Pod::Simple::Subclassing>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -95,7 +110,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
+ 
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/PullParserToken.pm.ccc perl-5.10.1/lib/Pod/Simple/PullParserToken.pm
+--- perl-5.10.1/lib/Pod/Simple/PullParserToken.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/PullParserToken.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -3,7 +3,7 @@ require 5;
+ package Pod::Simple::PullParserToken;
+  # Base class for tokens gotten from Pod::Simple::PullParser's $parser->get_token
+ @ISA = ();
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ use strict;
+ 
+ sub new {  # Class->new('type', stuff...);  ## Overridden in derived classes anyway
+@@ -119,9 +119,22 @@ L<Pod::Simple::PullParserEndToken>.
+ 
+ L<Pod::Simple::PullParser> and L<Pod::Simple>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -132,7 +145,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/RTF.pm.ccc perl-5.10.1/lib/Pod/Simple/RTF.pm
+--- perl-5.10.1/lib/Pod/Simple/RTF.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/RTF.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -8,7 +8,7 @@ package Pod::Simple::RTF;
+ 
+ use strict;
+ use vars qw($VERSION @ISA %Escape $WRAP %Tagmap);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ use Pod::Simple::PullParser ();
+ BEGIN {@ISA = ('Pod::Simple::PullParser')}
+ 
+@@ -655,9 +655,22 @@ even more, see the source and/or write t
+ L<Pod::Simple>, L<RTF::Writer>, L<RTF::Cookbook>, L<RTF::Document>,
+ L<RTF::Generator>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -668,7 +681,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Search.pm.ccc perl-5.10.1/lib/Pod/Simple/Search.pm
+--- perl-5.10.1/lib/Pod/Simple/Search.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Search.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -4,7 +4,7 @@ package Pod::Simple::Search;
+ use strict;
+ 
+ use vars qw($VERSION $MAX_VERSION_WITHIN $SLEEPY);
+-$VERSION = 3.04;   ## Current version of this package
++$VERSION = '3.13';   ## Current version of this package
+ 
+ BEGIN { *DEBUG = sub () {0} unless defined &DEBUG; }   # set DEBUG level
+ use Carp ();
+@@ -996,21 +996,48 @@ with default attribute values is used.
+ 
+ Returns true if the supplied filename (not POD module) contains some Pod
+ documentation.
++=head1 SUPPORT
+ 
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
++=head1 COPYRIGHT AND DISCLAIMERS
++
++Copyright (c) 2002 Sean M. Burke.
++
++This library is free software; you can redistribute it and/or modify it
++under the same terms as Perl itself.
++
++This program is distributed in the hope that it will be useful, but
++without any warranty; without even the implied warranty of
++merchantability or fitness for a particular purpose.
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke E<lt>sburke@cpan.orgE<gt>
+-borrowed code from
+-Marek Rouchal's Pod::Find, which in turn
+-heavily borrowed code from Nick Ing-Simmons' PodToHtml.
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org> with code borrowed
++from Marek Rouchal's L<Pod::Find>, which in turn heavily borrowed code from
++Nick Ing-Simmons' C<PodToHtml>.
+ 
+-Tim Jenness E<lt>t.jenness@jach.hawaii.eduE<gt> provided
+-C<find> and C<contains_pod> to Pod::Find.
++But don't bother him, he's retired.
+ 
+-=head1 SEE ALSO
++Pod::Simple is maintained by:
+ 
+-L<Pod::Simple>, L<Pod::Perldoc>
++=over
+ 
+-=cut
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
+ 
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/SimpleTree.pm.ccc perl-5.10.1/lib/Pod/Simple/SimpleTree.pm
+--- perl-5.10.1/lib/Pod/Simple/SimpleTree.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/SimpleTree.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -6,7 +6,7 @@ use strict;
+ use Carp ();
+ use Pod::Simple ();
+ use vars qw( $ATTR_PAD @ISA $VERSION $SORT_ATTRS);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ BEGIN {
+   @ISA = ('Pod::Simple');
+   *DEBUG = \&Pod::Simple::DEBUG unless defined &DEBUG;
+@@ -136,9 +136,22 @@ L<perllol>
+ 
+ L<The "Tree" subsubsection in XML::Parser|XML::Parser/"Tree">
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -149,7 +162,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Subclassing.pod.ccc perl-5.10.1/lib/Pod/Simple/Subclassing.pod
+--- perl-5.10.1/lib/Pod/Simple/Subclassing.pod.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Subclassing.pod	2009-12-10 18:36:25.000000000 +0100
+@@ -893,10 +893,22 @@ L<perlpodspec|perlpodspec>
+ 
+ L<perldoc>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -907,8 +919,20 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
++
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
+ 
++=back
+ 
+ =for notes
+ Hm, my old podchecker version (1.2) says:
+diff -up perl-5.10.1/lib/Pod/Simple/TextContent.pm.ccc perl-5.10.1/lib/Pod/Simple/TextContent.pm
+--- perl-5.10.1/lib/Pod/Simple/TextContent.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/TextContent.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -6,7 +6,7 @@ use strict;
+ use Carp ();
+ use Pod::Simple ();
+ use vars qw( @ISA $VERSION );
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ @ISA = ('Pod::Simple');
+ 
+ sub new {
+@@ -68,9 +68,22 @@ This is a subclass of L<Pod::Simple> and
+ 
+ L<Pod::Simple>, L<Pod::Simple::Text>, L<Pod::Spell>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -81,7 +94,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/Text.pm.ccc perl-5.10.1/lib/Pod/Simple/Text.pm
+--- perl-5.10.1/lib/Pod/Simple/Text.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Text.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -6,7 +6,7 @@ use Carp ();
+ use Pod::Simple::Methody ();
+ use Pod::Simple ();
+ use vars qw( @ISA $VERSION $FREAKYMODE);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ @ISA = ('Pod::Simple::Methody');
+ BEGIN { *DEBUG = defined(&Pod::Simple::DEBUG)
+           ? \&Pod::Simple::DEBUG
+@@ -66,6 +66,14 @@ sub end_Para        { $_[0]->emit_par( 0
+ sub end_item_bullet { $_[0]->emit_par( 0) }
+ sub end_item_number { $_[0]->emit_par( 0) }
+ sub end_item_text   { $_[0]->emit_par(-2) }
++sub start_L         { $_[0]{'Link'} = $_[1] if $_[1]->{type} eq 'url' }
++sub end_L           {
++    if (my $link = delete $_[0]{'Link'}) {
++        # Append the URL to the output unless it's already present.
++        $_[0]{'Thispara'} .= " <$link->{to}>"
++            unless $_[0]{'Thispara'} =~ /\b\E$link->{to}/;
++    }
++}
+ 
+ sub emit_par {
+   my($self, $tweak_indent) = splice(@_,0,2);
+@@ -133,9 +141,22 @@ This is a subclass of L<Pod::Simple> and
+ 
+ L<Pod::Simple>, L<Pod::Simple::TextContent>, L<Pod::Text>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -146,7 +167,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
++
++=over
+ 
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/TiedOutFH.pm.ccc perl-5.10.1/lib/Pod/Simple/TiedOutFH.pm
+--- perl-5.10.1/lib/Pod/Simple/TiedOutFH.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/TiedOutFH.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -3,6 +3,8 @@ use strict;
+ package Pod::Simple::TiedOutFH;
+ use Symbol ('gensym');
+ use Carp ();
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+diff -up perl-5.10.1/lib/Pod/Simple/TranscodeDumb.pm.ccc perl-5.10.1/lib/Pod/Simple/TranscodeDumb.pm
+--- perl-5.10.1/lib/Pod/Simple/TranscodeDumb.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/TranscodeDumb.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -5,7 +5,7 @@ require 5;
+ package Pod::Simple::TranscodeDumb;
+ use strict;
+ use vars qw($VERSION %Supported);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ # This module basically pretends it knows how to transcode, except
+ #  only for null-transcodings!  We use this when Encode isn't
+ #  available.
+diff -up perl-5.10.1/lib/Pod/Simple/Transcode.pm.ccc perl-5.10.1/lib/Pod/Simple/Transcode.pm
+--- perl-5.10.1/lib/Pod/Simple/Transcode.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/Transcode.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -1,6 +1,8 @@
+ 
+ require 5;
+ package Pod::Simple::Transcode;
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ BEGIN {
+   if(defined &DEBUG) {;} # Okay
+diff -up perl-5.10.1/lib/Pod/Simple/TranscodeSmart.pm.ccc perl-5.10.1/lib/Pod/Simple/TranscodeSmart.pm
+--- perl-5.10.1/lib/Pod/Simple/TranscodeSmart.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/TranscodeSmart.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -8,6 +8,8 @@ package Pod::Simple::TranscodeSmart;
+ use strict;
+ use Pod::Simple;
+ require Encode;
++use vars qw($VERSION );
++$VERSION = '3.13';
+ 
+ sub is_dumb  {0}
+ sub is_smart {1}
+diff -up perl-5.10.1/lib/Pod/Simple/XHTML.pm.ccc perl-5.10.1/lib/Pod/Simple/XHTML.pm
+--- perl-5.10.1/lib/Pod/Simple/XHTML.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/XHTML.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -28,7 +28,7 @@ L<Pod::Simple::HTML>, but it largely pre
+ package Pod::Simple::XHTML;
+ use strict;
+ use vars qw( $VERSION @ISA $HAS_HTML_ENTITIES );
+-$VERSION = '3.04';
++$VERSION = '3.13';
+ use Carp ();
+ use Pod::Simple::Methody ();
+ @ISA = ('Pod::Simple::Methody');
+@@ -76,6 +76,16 @@ to put before the "Foo%3a%3aBar". The de
+ What to put after "Foo%3a%3aBar" in the URL. This option is not set by
+ default.
+ 
++=head2 man_url_prefix
++
++In turning C<< L<crontab(5)> >> into http://whatever/man/1/crontab, what
++to put before the "1/crontab". The default value is
++"http://man.he.net/man".
++
++=head2 man_url_postfix
++
++What to put after "1/crontab" in the URL. This option is not set by default.
++
+ =head2 title_prefix, title_postfix
+ 
+ What to put before and after the title in the head. The values should
+@@ -107,6 +117,12 @@ default value is just a content type hea
+ Add additional meta tags here, or blocks of inline CSS or JavaScript
+ (wrapped in the appropriate tags).
+ 
++=head2 html_h_level
++
++This is the level of HTML "Hn" element to which a Pod "head1" corresponds.  For
++example, if C<html_h_level> is set to 2, a head1 will produce an H2, a head2
++will produce an H3, and so on.
++
+ =head2 default_title
+ 
+ Set a default title for the page if no title can be determined from the
+@@ -137,8 +153,6 @@ to the empty string.
+ 
+ =head2 index
+ 
+-TODO -- Not implemented.
+-
+ Whether to add a table-of-contents at the top of each page (called an
+ index for the sake of tradition).
+ 
+@@ -148,11 +162,14 @@ index for the sake of tradition).
+ __PACKAGE__->_accessorize(
+  'perldoc_url_prefix',
+  'perldoc_url_postfix',
++ 'man_url_prefix',
++ 'man_url_postfix',
+  'title_prefix',  'title_postfix',
+  'html_css', 
+  'html_javascript',
+  'html_doctype',
+  'html_header_tags',
++ 'html_h_level',
+  'title', # Used internally for the title extracted from the content
+  'default_title',
+  'force_title',
+@@ -179,12 +196,21 @@ sub new {
+   my $self = shift;
+   my $new = $self->SUPER::new(@_);
+   $new->{'output_fh'} ||= *STDOUT{IO};
+-  $new->accept_targets( 'html', 'HTML' );
+   $new->perldoc_url_prefix('http://search.cpan.org/perldoc?');
+-  $new->html_header_tags('<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">');
++  $new->man_url_prefix('http://man.he.net/man');
++  $new->html_header_tags('<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1" />');
+   $new->nix_X_codes(1);
+   $new->codes_in_verbatim(1);
+   $new->{'scratch'} = '';
++  $new->{'to_index'} = [];
++  $new->{'output'} = [];
++  $new->{'saved'} = [];
++  $new->{'ids'} = {};
++
++  $new->{'__region_targets'}  = [];
++  $new->{'__literal_targets'} = {};
++  $new->accept_targets_as_html( 'html', 'HTML' );
++
+   return $new;
+ }
+ 
+@@ -214,71 +240,158 @@ something like:
+   sub handle_text {
+       my ($self, $text) = @_;
+       if ($self->{'in_foo'}) {
+-          $self->{'scratch'} .= build_foo_html($text); 
++          $self->{'scratch'} .= build_foo_html($text);
+       } else {
+           $self->{'scratch'} .= $text;
+       }
+   }
+ 
++=head2 accept_targets_as_html
++
++This method behaves like C<accept_targets_as_text>, but also marks the region
++as one whose content should be emitted literally, without HTML entity escaping
++or wrapping in a C<div> element.
++
+ =cut
+ 
++sub __in_literal_xhtml_region {
++    return unless @{ $_[0]{__region_targets} };
++    my $target = $_[0]{__region_targets}[-1];
++    return $_[0]{__literal_targets}{ $target };
++}
++
++sub accept_targets_as_html {
++    my ($self, @targets) = @_;
++    $self->accept_targets(@targets);
++    $self->{__literal_targets}{$_} = 1 for @targets;
++}
++
+ sub handle_text {
+     # escape special characters in HTML (<, >, &, etc)
+-    $_[0]{'scratch'} .= $_[0]{'in_verbatim'} ? encode_entities( $_[1] ) : $_[1]
++    $_[0]{'scratch'} .= $_[0]->__in_literal_xhtml_region
++                      ? $_[1]
++                      : encode_entities( $_[1] );
+ }
+ 
+ sub start_Para     { $_[0]{'scratch'} = '<p>' }
+-sub start_Verbatim { $_[0]{'scratch'} = '<pre><code>'; $_[0]{'in_verbatim'} = 1}
++sub start_Verbatim { $_[0]{'scratch'} = '<pre><code>' }
+ 
+-sub start_head1 {  $_[0]{'scratch'} = '<h1>' }
+-sub start_head2 {  $_[0]{'scratch'} = '<h2>' }
+-sub start_head3 {  $_[0]{'scratch'} = '<h3>' }
+-sub start_head4 {  $_[0]{'scratch'} = '<h4>' }
+-
+-sub start_item_bullet { $_[0]{'scratch'} = '<li>' }
+-sub start_item_number { $_[0]{'scratch'} = "<li>$_[1]{'number'}. "  }
+-sub start_item_text   { $_[0]{'scratch'} = '<li>'   }
++sub start_head1 {  $_[0]{'in_head'} = 1 }
++sub start_head2 {  $_[0]{'in_head'} = 2 }
++sub start_head3 {  $_[0]{'in_head'} = 3 }
++sub start_head4 {  $_[0]{'in_head'} = 4 }
++
++sub start_item_number {
++    $_[0]{'scratch'} = "</li>\n" if $_[0]{'in_li'};
++    $_[0]{'scratch'} .= '<li><p>';
++    $_[0]{'in_li'} = 1
++}
++
++sub start_item_bullet {
++    $_[0]{'scratch'} = "</li>\n" if $_[0]{'in_li'};
++    $_[0]{'scratch'} .= '<li><p>';
++    $_[0]{'in_li'} = 1
++}
++
++sub start_item_text   {
++    if ($_[0]{'in_dd'}[ $_[0]{'dl_level'} ]) {
++        $_[0]{'scratch'} = "</dd>\n";
++        $_[0]{'in_dd'}[ $_[0]{'dl_level'} ] = 0;
++    }
++    $_[0]{'scratch'} .= '<dt>';
++}
+ 
+ sub start_over_bullet { $_[0]{'scratch'} = '<ul>'; $_[0]->emit }
+-sub start_over_text   { $_[0]{'scratch'} = '<ul>'; $_[0]->emit }
+ sub start_over_block  { $_[0]{'scratch'} = '<ul>'; $_[0]->emit }
+ sub start_over_number { $_[0]{'scratch'} = '<ol>'; $_[0]->emit }
++sub start_over_text   {
++    $_[0]{'scratch'} = '<dl>';
++    $_[0]{'dl_level'}++;
++    $_[0]{'in_dd'} ||= [];
++    $_[0]->emit
++}
+ 
+-sub end_over_bullet { $_[0]{'scratch'} .= '</ul>'; $_[0]->emit }
+-sub end_over_text   { $_[0]{'scratch'} .= '</ul>'; $_[0]->emit }
+ sub end_over_block  { $_[0]{'scratch'} .= '</ul>'; $_[0]->emit }
+-sub end_over_number { $_[0]{'scratch'} .= '</ol>'; $_[0]->emit }
++
++sub end_over_number   {
++    $_[0]{'scratch'} = "</li>\n" if delete $_[0]{'in_li'};
++    $_[0]{'scratch'} .= '</ol>';
++    $_[0]->emit;
++}
++
++sub end_over_bullet   {
++    $_[0]{'scratch'} = "</li>\n" if delete $_[0]{'in_li'};
++    $_[0]{'scratch'} .= '</ul>';
++    $_[0]->emit;
++}
++
++sub end_over_text   {
++    if ($_[0]{'in_dd'}[ $_[0]{'dl_level'} ]) {
++        $_[0]{'scratch'} = "</dd>\n";
++        $_[0]{'in_dd'}[ $_[0]{'dl_level'} ] = 0;
++    }
++    $_[0]{'scratch'} .= '</dl>';
++    $_[0]{'dl_level'}--;
++    $_[0]->emit;
++}
+ 
+ # . . . . . Now the actual formatters:
+ 
+ sub end_Para     { $_[0]{'scratch'} .= '</p>'; $_[0]->emit }
+ sub end_Verbatim {
+     $_[0]{'scratch'}     .= '</code></pre>';
+-    $_[0]{'in_verbatim'}  = 0;
+     $_[0]->emit;
+ }
+ 
+-sub end_head1       { $_[0]{'scratch'} .= '</h1>'; $_[0]->emit }
+-sub end_head2       { $_[0]{'scratch'} .= '</h2>'; $_[0]->emit }
+-sub end_head3       { $_[0]{'scratch'} .= '</h3>'; $_[0]->emit }
+-sub end_head4       { $_[0]{'scratch'} .= '</h4>'; $_[0]->emit }
+-
+-sub end_item_bullet { $_[0]{'scratch'} .= '</li>'; $_[0]->emit }
+-sub end_item_number { $_[0]{'scratch'} .= '</li>'; $_[0]->emit }
+-sub end_item_text   { $_[0]->emit }
++sub _end_head {
++    my $h = delete $_[0]{in_head};
++
++    my $add = $_[0]->html_h_level;
++    $add = 1 unless defined $add;
++    $h += $add - 1;
++
++    my $id = $_[0]->idify($_[0]{scratch});
++    my $text = $_[0]{scratch};
++    $_[0]{'scratch'} = qq{<h$h id="$id">$text</h$h>};
++    $_[0]->emit;
++    push @{ $_[0]{'to_index'} }, [$h, $id, $text];
++}
++
++sub end_head1       { shift->_end_head(@_); }
++sub end_head2       { shift->_end_head(@_); }
++sub end_head3       { shift->_end_head(@_); }
++sub end_head4       { shift->_end_head(@_); }
++
++sub end_item_bullet { $_[0]{'scratch'} .= '</p>'; $_[0]->emit }
++sub end_item_number { $_[0]{'scratch'} .= '</p>'; $_[0]->emit }
++
++sub end_item_text   {
++    $_[0]{'scratch'} .= "</dt>\n<dd>";
++    $_[0]{'in_dd'}[ $_[0]{'dl_level'} ] = 1;
++    $_[0]->emit;
++}
+ 
+ # This handles =begin and =for blocks of all kinds.
+ sub start_for { 
+   my ($self, $flags) = @_;
+-  $self->{'scratch'} .= '<div';
+-  $self->{'scratch'} .= ' class="'.$flags->{'target'}.'"' if ($flags->{'target'});
+-  $self->{'scratch'} .= '>';
++
++  push @{ $self->{__region_targets} }, $flags->{target_matching};
++
++  unless ($self->__in_literal_xhtml_region) {
++    $self->{scratch} .= '<div';
++    $self->{scratch} .= qq( class="$flags->{target}") if $flags->{target};
++    $self->{scratch} .= '>';
++  }
++
+   $self->emit;
+ 
+ }
+ sub end_for { 
+   my ($self) = @_;
+-  $self->{'scratch'} .= '</div>';
++
++  $self->{'scratch'} .= '</div>' unless $self->__in_literal_xhtml_region;
++
++  pop @{ $self->{__region_targets} };
+   $self->emit;
+ }
+ 
+@@ -313,8 +426,49 @@ HTML
+   }
+ }
+ 
+-sub end_Document   { 
++sub end_Document   {
+   my ($self) = @_;
++  my $to_index = $self->{'to_index'};
++  if ($self->index && @{ $to_index } ) {
++      my @out;
++      my $level  = 0;
++      my $indent = -1;
++      my $space  = '';
++      my $id     = ' id="index"';
++
++      for my $h (@{ $to_index }, [0]) {
++          my $target_level = $h->[0];
++          # Get to target_level by opening or closing ULs
++          if ($level == $target_level) {
++              $out[-1] .= '</li>';
++          } elsif ($level > $target_level) {
++              $out[-1] .= '</li>' if $out[-1] =~ /^\s+<li>/;
++              while ($level > $target_level) {
++                  --$level;
++                  push @out, ('  ' x --$indent) . '</li>' if @out && $out[-1] =~ m{^\s+<\/ul};
++                  push @out, ('  ' x --$indent) . '</ul>';
++              }
++              push @out, ('  ' x --$indent) . '</li>' if $level;
++          } else {
++              while ($level < $target_level) {
++                  ++$level;
++                  push @out, ('  ' x ++$indent) . '<li>' if @out && $out[-1]=~ /^\s*<ul/;
++                  push @out, ('  ' x ++$indent) . "<ul$id>";
++                  $id = '';
++              }
++              ++$indent;
++          }
++
++          next unless $level;
++          $space = '  '  x $indent;
++          push @out, sprintf '%s<li><a href="#%s">%s</a>',
++              $space, $h->[1], $h->[2];
++      }
++      # Splice the index in between the HTML headers and the first element.
++      my $offset = defined $self->html_header ? $self->html_header eq '' ? 0 : 1 : 1;
++      splice @{ $self->{'output'} }, $offset, 0, join "\n", @out;
++  }
++
+   if (defined $self->html_footer) {
+     $self->{'scratch'} .= $self->html_footer;
+     $self->emit unless $self->html_footer eq "";
+@@ -322,6 +476,12 @@ sub end_Document   { 
+     $self->{'scratch'} .= "</body>\n</html>";
+     $self->emit;
+   }
++
++  if ($self->index) {
++      print {$self->{'output_fh'}} join ("\n\n", @{ $self->{'output'} }), "\n\n";
++      @{$self->{'output'}} = ();
++  }
++
+ }
+ 
+ # Handling code tags
+@@ -331,31 +491,24 @@ sub end_B   { $_[0]{'scratch'} .= '</b>'
+ sub start_C { $_[0]{'scratch'} .= '<code>' }
+ sub end_C   { $_[0]{'scratch'} .= '</code>' }
+ 
+-sub start_E { $_[0]{'scratch'} .= '&' }
+-sub end_E   { $_[0]{'scratch'} .= ';' }
+-
+ sub start_F { $_[0]{'scratch'} .= '<i>' }
+ sub end_F   { $_[0]{'scratch'} .= '</i>' }
+ 
+ sub start_I { $_[0]{'scratch'} .= '<i>' }
+ sub end_I   { $_[0]{'scratch'} .= '</i>' }
+ 
+-sub start_L { 
++sub start_L {
+   my ($self, $flags) = @_;
+-    my $url;
+-    if ($flags->{'type'} eq 'url') {
+-      $url = $flags->{'to'};
+-    } elsif ($flags->{'type'} eq 'pod') {
+-      $url .= $self->perldoc_url_prefix || '';
+-      $url .= $flags->{'to'} || '';
+-      $url .= '/' . $flags->{'section'} if ($flags->{'section'});
+-      $url .= $self->perldoc_url_postfix || '';
+-#    require Data::Dumper;
+-#    print STDERR Data::Dumper->Dump([$flags]);
+-    }
++    my ($type, $to, $section) = @{$flags}{'type', 'to', 'section'};
++    my $url = $type eq 'url' ? $to
++            : $type eq 'pod' ? $self->resolve_pod_page_link($to, $section)
++            : $type eq 'man' ? $self->resolve_man_page_link($to, $section)
++            :                  undef;
+ 
+-    $self->{'scratch'} .= '<a href="'. $url . '">';
++    # If it's an unknown type, use an attribute-less <a> like HTML.pm.
++    $self->{'scratch'} .= '<a' . ($url ? ' href="'. $url . '">' : '>');
+ }
++
+ sub end_L   { $_[0]{'scratch'} .= '</a>' }
+ 
+ sub start_S { $_[0]{'scratch'} .= '<nobr>' }
+@@ -363,14 +516,144 @@ sub end_S   { $_[0]{'scratch'} .= '</nob
+ 
+ sub emit {
+   my($self) = @_;
+-  my $out = $self->{'scratch'} . "\n";
+-  print {$self->{'output_fh'}} $out, "\n";
++  if ($self->index) {
++      push @{ $self->{'output'} }, $self->{'scratch'};
++  } else {
++      print {$self->{'output_fh'}} $self->{'scratch'}, "\n\n";
++  }
+   $self->{'scratch'} = '';
+   return;
+ }
+ 
+-# Bypass built-in E<> handling to preserve entity encoding
+-sub _treat_Es {} 
++=head2 resolve_pod_page_link
++
++  my $url = $pod->resolve_pod_page_link('Net::Ping', 'INSTALL');
++  my $url = $pod->resolve_pod_page_link('perlpodspec');
++  my $url = $pod->resolve_pod_page_link(undef, 'SYNOPSIS');
++
++Resolves a POD link target (typically a module or POD file name) and section
++name to a URL. The resulting link will be returned for the above examples as:
++
++  http://search.cpan.org/perldoc?Net::Ping#INSTALL
++  http://search.cpan.org/perldoc?perlpodspec
++  #SYNOPSIS
++
++Note that when there is only a section argument the URL will simply be a link
++to a section in the current document.
++
++=cut
++
++sub resolve_pod_page_link {
++    my ($self, $to, $section) = @_;
++    return undef unless defined $to || defined $section;
++    if (defined $section) {
++        $section = '#' . $self->idify($section, 1);
++        return $section unless defined $to;
++    } else {
++        $section = ''
++    }
++
++    return ($self->perldoc_url_prefix || '')
++        . encode_entities($to) . $section
++        . ($self->perldoc_url_postfix || '');
++}
++
++=head2 resolve_man_page_link
++
++  my $url = $pod->resolve_man_page_link('crontab(5)', 'EXAMPLE CRON FILE');
++  my $url = $pod->resolve_man_page_link('crontab');
++
++Resolves a man page link target and numeric section to a URL. The resulting
++link will be returned for the above examples as:
++
++    http://man.he.net/man5/crontab
++    http://man.he.net/man1/crontab
++
++Note that the first argument is required. The section number will be parsed
++from it, and if it's missing will default to 1. The second argument is
++currently ignored, as L<man.he.net|http://man.he.net> does not currently
++include linkable IDs or anchor names in its pages. Subclass to link to a
++different man page HTTP server.
++
++=cut
++
++sub resolve_man_page_link {
++    my ($self, $to, $section) = @_;
++    return undef unless defined $to;
++    my ($page, $part) = $to =~ /^([^(]+)(?:[(](\d+)[)])?$/;
++    return undef unless $page;
++    return ($self->man_url_prefix || '')
++        . ($part || 1) . "/" . encode_entities($page)
++        . ($self->man_url_postfix || '');
++
++}
++
++=head2 idify
++
++  my $id   = $pod->idify($text);
++  my $hash = $pod->idify($text, 1);
++
++This method turns an arbitrary string into a valid XHTML ID attribute value.
++The rules enforced, following
++L<http://webdesign.about.com/od/htmltags/a/aa031707.htm>, are:
++
++=over
++
++=item *
++
++The id must start with a letter (a-z or A-Z)
++
++=item *
++
++All subsequent characters can be letters, numbers (0-9), hyphens (-),
++underscores (_), colons (:), and periods (.).
++
++=item *
++
++Each id must be unique within the document.
++
++=back
++
++In addition, the returned value will be unique within the context of the
++Pod::Simple::XHTML object unless a second argument is passed a true value. ID
++attributes should always be unique within a single XHTML document, but pass
++the true value if you are creating not an ID but a URL hash to point to
++an ID (i.e., if you need to put the "#foo" in C<< <a href="#foo">foo</a> >>.
++
++=cut
++
++sub idify {
++    my ($self, $t, $not_unique) = @_;
++    for ($t) {
++        s/<[^>]+>//g;            # Strip HTML.
++        s/&[^;]+;//g;            # Strip entities.
++        s/^([^a-zA-Z]+)$/pod$1/; # Prepend "pod" if no valid chars.
++        s/^[^a-zA-Z]+//;         # First char must be a letter.
++        s/[^-a-zA-Z0-9_:.]+/-/g; # All other chars must be valid.
++    }
++    return $t if $not_unique;
++    my $i = '';
++    $i++ while $self->{ids}{"$t$i"}++;
++    return "$t$i";
++}
++
++=head2 batch_mode_page_object_init
++
++  $pod->batch_mode_page_object_init($batchconvobj, $module, $infile, $outfile, $depth);
++
++Called by L<Pod::Simple::HTMLBatch> so that the class has a chance to
++initialize the converter. Internally it sets the C<batch_mode> property to
++true and sets C<batch_mode_current_level()>, but Pod::Simple::XHTML does not
++currently use those features. Subclasses might, though.
++
++=cut
++
++sub batch_mode_page_object_init {
++  my ($self, $batchconvobj, $module, $infile, $outfile, $depth) = @_;
++  $self->batch_mode(1);
++  $self->batch_mode_current_level($depth);
++  return $self;
++}
+ 
+ 1;
+ 
+@@ -378,23 +661,57 @@ __END__
+ 
+ =head1 SEE ALSO
+ 
+-L<Pod::Simple>, L<Pod::Simple::Methody>
++L<Pod::Simple>, L<Pod::Simple::Text>, L<Pod::Spell>
++
++=head1 SUPPORT
+ 
+-=head1 COPYRIGHT
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
++
++=head1 COPYRIGHT AND DISCLAIMERS
+ 
+ Copyright (c) 2003-2005 Allison Randal.
+ 
+-This library is free software; you can redistribute it and/or modify
+-it under the same terms as Perl itself. The full text of the license
+-can be found in the LICENSE file included with this module.
++This library is free software; you can redistribute it and/or modify it
++under the same terms as Perl itself.
+ 
+-This library is distributed in the hope that it will be useful, but
++This program is distributed in the hope that it will be useful, but
+ without any warranty; without even the implied warranty of
+ merchantability or fitness for a particular purpose.
+ 
++=head1 ACKNOWLEDGEMENTS
++
++Thanks to L<Hurricane Electrict|http://he.net/> for permission to use its
++L<Linux man pages online|http://man.he.net/> site for man page links.
++
++Thanks to L<search.cpan.org|http://search.cpan.org/> for permission to use the
++site for Perl module links.
++
+ =head1 AUTHOR
+ 
+-Allison Randal <allison@perl.org>
++Pod::Simpele::XHTML was created by Allison Randal <allison@perl.org>.
+ 
+-=cut
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
++Pod::Simple is maintained by:
++
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/lib/Pod/Simple/XMLOutStream.pm.ccc perl-5.10.1/lib/Pod/Simple/XMLOutStream.pm
+--- perl-5.10.1/lib/Pod/Simple/XMLOutStream.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/XMLOutStream.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -5,7 +5,7 @@ use strict;
+ use Carp ();
+ use Pod::Simple ();
+ use vars qw( $ATTR_PAD @ISA $VERSION $SORT_ATTRS);
+-$VERSION = '2.02';
++$VERSION = '3.13';
+ BEGIN {
+   @ISA = ('Pod::Simple');
+   *DEBUG = \&Pod::Simple::DEBUG unless defined &DEBUG;
+@@ -137,10 +137,26 @@ options in this module (and the dozen mo
+ undocumented; but one of those undocumented bits might be just what
+ you're looking for.
+ 
++=head1 SEE ALSO
++
++L<Pod::Simple>, L<Pod::Simple::Text>, L<Pod::Spell>
++
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002-4 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002-2004 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -151,7 +167,19 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-=cut
++Pod::Simple is maintained by:
+ 
++=over
++
++=item * Allison Randal C<allison@perl.org>
++
++=item * Hans Dieter Pearcey C<hdp@cpan.org>
++
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
++=back
++
++=cut
+diff -up perl-5.10.1/pod/perlpod.pod.ccc perl-5.10.1/pod/perlpod.pod
+--- perl-5.10.1/pod/perlpod.pod.ccc	2009-05-04 14:23:49.000000000 +0200
++++ perl-5.10.1/pod/perlpod.pod	2009-12-09 23:05:37.000000000 +0100
+@@ -395,7 +395,7 @@ C<LE<lt>perlsyn/"For Loops"E<gt>>
+ 
+ =item *
+ 
+-C<LE<lt>/"sec"E<gt>> or C<LE<lt>/secE<gt>> or C<LE<lt>"sec"E<gt>>
++C<LE<lt>/"sec"E<gt>> or C<LE<lt>/secE<gt>>
+ 
+ Link to a section in this manual page.  E.g.,
+ C<LE<lt>/"Object Methods"E<gt>>
+@@ -446,10 +446,10 @@ Or you can link to a web page:
+ 
+ C<LE<lt>scheme:...E<gt>>
+ 
+-Links to an absolute URL.  For example,
+-C<LE<lt>http://www.perl.org/E<gt>>.  But note
+-that there is no corresponding C<LE<lt>text|scheme:...E<gt>> syntax, for
+-various reasons.
++C<LE<lt>text|scheme:...E<gt>>
++
++Links to an absolute URL.  For example, C<LE<lt>http://www.perl.org/E<gt>> or
++C<LE<lt>The Perl Home Page|http://www.perl.org/E<gt>>.
+ 
+ =back
+ 
+diff -up perl-5.10.1/pod/perlpodspec.pod.ccc perl-5.10.1/pod/perlpodspec.pod
+--- perl-5.10.1/pod/perlpodspec.pod.ccc	2009-05-26 23:25:23.000000000 +0200
++++ perl-5.10.1/pod/perlpodspec.pod	2009-12-09 22:47:09.000000000 +0100
+@@ -293,6 +293,8 @@ by the most recent "=over" command.  It 
+ 
+ =item "=begin formatname"
+ 
++=item "=begin formatname parameter"
++
+ This marks the following paragraphs (until the matching "=end
+ formatname") as being for some special kind of processing.  Unless
+ "formatname" begins with a colon, the contained non-command
+@@ -302,9 +304,11 @@ or data paragraphs.  This is discussed i
+ L</About Data Paragraphs and "=beginE<sol>=end" Regions>.
+ 
+ It is advised that formatnames match the regexp
+-C<m/\A:?[-a-zA-Z0-9_]+\z/>.  Implementors should anticipate future
+-expansion in the semantics and syntax of the first parameter
+-to "=begin"/"=end"/"=for".
++C<m/\A:?[−a−zA−Z0−9_]+\z/>.  Everything following whitespace after the
++formatname is a parameter that may be used by the formatter when dealing
++with this region.  This parameter must not be repeated in the "=end"
++paragraph.  Implementors should anticipate future expansion in the
++semantics and syntax of the first parameter to "=begin"/"=end"/"=for".
+ 
+ =item "=end formatname"
+ 
+@@ -1208,6 +1212,14 @@ For example:
+         'url',                          # what sort of link
+         "http://www.perl.org/"          # original content
+ 
++  L<Perl.org|http://www.perl.org/>
++    =>  "Perl.org",                     # link text
++        "http://www.perl.org/",         # possibly inferred link text
++        "http://www.perl.org/",         # name
++        undef,                          # section
++        'url',                          # what sort of link
++        "Perl.org|http://www.perl.org/" # original content
++
+ Note that you can distinguish URL-links from anything else by the
+ fact that they match C<m/\A\w+:[^:\s]\S*\z/>.  So
+ C<LE<lt>http://www.perl.comE<gt>> is a URL, but
+@@ -1332,15 +1344,16 @@ given C<LE<lt>fooE<gt>> code.
+ 
+ =item *
+ 
+-Previous versions of perlpod allowed for a C<LE<lt>sectionE<gt>> syntax
+-(as in C<LE<lt>Object AttributesE<gt>>), which was not easily distinguishable
+-from C<LE<lt>nameE<gt>> syntax.  This syntax is no longer in the
+-specification, and has been replaced by the C<LE<lt>"section"E<gt>> syntax
+-(where the quotes were formerly optional).  Pod parsers should tolerate
+-the C<LE<lt>sectionE<gt>> syntax, for a while at least.  The suggested
+-heuristic for distinguishing C<LE<lt>sectionE<gt>> from C<LE<lt>nameE<gt>>
+-is that if it contains any whitespace, it's a I<section>.  Pod processors
+-may warn about this being deprecated syntax.
++Previous versions of perlpod allowed for a C<LE<lt>sectionE<gt>> syntax (as in
++C<LE<lt>Object AttributesE<gt>>), which was not easily distinguishable from
++C<LE<lt>nameE<gt>> syntax and for C<LE<lt>"section"E<gt>> which was only
++slightly less ambiguous.  This syntax is no longer in the specification, and
++has been replaced by the C<LE<lt>/sectionE<gt>> syntax (where the slash was
++formerly optional).  Pod parsers should tolerate the C<LE<lt>"section"E<gt>>
++syntax, for a while at least.  The suggested heuristic for distinguishing
++C<LE<lt>sectionE<gt>> from C<LE<lt>nameE<gt>> is that if it contains any
++whitespace, it's a I<section>.  Pod processors should warn about this being
++deprecated syntax.
+ 
+ =back
+ 
+diff -up perl-5.10.1/lib/Pod/Simple.pm.ccc perl-5.10.1/lib/Pod/Simple.pm
+--- perl-5.10.1/lib/Pod/Simple.pm.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple.pm	2009-12-17 19:51:59.000000000 +0100
+@@ -5,7 +5,7 @@ use strict;
+ use Carp ();
+ BEGIN           { *DEBUG = sub () {0} unless defined &DEBUG }
+ use integer;
+-use Pod::Escapes 1.03 ();
++use Pod::Escapes 1.04 ();
+ use Pod::Simple::LinkSection ();
+ use Pod::Simple::BlackBox ();
+ #use utf8;
+@@ -18,7 +18,7 @@ use vars qw(
+ );
+ 
+ @ISA = ('Pod::Simple::BlackBox');
+-$VERSION = '3.07';
++$VERSION = '3.13';
+ 
+ @Known_formatting_codes = qw(I B C L E F S X Z); 
+ %Known_formatting_codes = map(($_=>1), @Known_formatting_codes);
+@@ -67,7 +67,7 @@ __PACKAGE__->_accessorize(
+ 
+   'hide_line_numbers', # For some dumping subclasses: whether to pointedly
+                        # suppress the start_line attribute
+-                      
++
+   'line_count',        # the current line number
+   'pod_para_count',    # count of pod paragraphs seen so far
+ 
+@@ -80,13 +80,12 @@ __PACKAGE__->_accessorize(
+   'bare_output',       # For some subclasses: whether to prepend
+                        #  header-code and postpend footer-code
+ 
+-  'fullstop_space_harden', # Whether to turn ".  " into ".[nbsp] ";
+-
+   'nix_X_codes',       # whether to ignore X<...> codes
+   'merge_text',        # whether to avoid breaking a single piece of
+                        #  text up into several events
+ 
+   'preserve_whitespace', # whether to try to keep whitespace as-is
++  'strip_verbatim_indent', # What indent to strip from verbatim
+ 
+  'content_seen',      # whether we've seen any real Pod content
+  'errors_seen',       # TODO: document.  whether we've seen any errors (fatal or not)
+@@ -98,7 +97,7 @@ __PACKAGE__->_accessorize(
+  #Called like:
+  # $code_handler->($line, $self->{'line_count'}, $self) if $code_handler;
+  #  $cut_handler->($line, $self->{'line_count'}, $self) if $cut_handler;
+-  
++
+ );
+ 
+ #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@ -983,7 +982,7 @@ sub _treat_Ls {  # Process our dear dear
+   # L<text|name/"sec"> or L<text|name/sec>
+   # L<text|/"sec"> or L<text|/sec> or L<text|"sec">
+   # L<scheme:...>
+-  # Ltext|scheme:...>
++  # L<text|scheme:...>
+ 
+   my($self,@stack) = @_;
+ 
+diff -up perl-5.10.1/lib/Pod/Simple.pod.ccc perl-5.10.1/lib/Pod/Simple.pod
+--- perl-5.10.1/lib/Pod/Simple.pod.ccc	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple.pod	2009-12-10 18:36:25.000000000 +0100
+@@ -12,29 +12,24 @@ Pod::Simple - framework for parsing Pod
+ Pod::Simple is a Perl library for parsing text in the Pod ("plain old
+ documentation") markup language that is typically used for writing
+ documentation for Perl and for Perl modules. The Pod format is explained
+-in the L<perlpod|perlpod> man page; the most common formatter is called
+-"perldoc".
++L<perlpod>; the most common formatter is called C<perldoc>.
+ 
+-Pod formatters can use Pod::Simple to parse Pod documents into produce
+-renderings of them in plain ASCII, in HTML, or in any number of other
+-formats. Typically, such formatters will be subclasses of Pod::Simple,
+-and so they will inherit its methods, like C<parse_file>.
++Pod formatters can use Pod::Simple to parse Pod documents and render them into
++plain text, HTML, or any number of other formats. Typically, such formatters
++will be subclasses of Pod::Simple, and so they will inherit its methods, like
++C<parse_file>.
+ 
+ If you're reading this document just because you have a Pod-processing
+-subclass that you want to use, this document (plus the documentation for
+-the subclass) is probably all you'll need to read.
++subclass that you want to use, this document (plus the documentation for the
++subclass) is probably all you need to read.
+ 
+ If you're reading this document because you want to write a formatter
+-subclass, continue reading this document, and then read
+-L<Pod::Simple::Subclassing>, and then possibly even read L<perlpodspec>
+-(some of which is for parser-writers, but much of which is notes to
+-formatter-writers).
+-
++subclass, continue reading it and then read L<Pod::Simple::Subclassing>, and
++then possibly even read L<perlpodspec> (some of which is for parser-writers,
++but much of which is notes to formatter-writers).
+ 
+ =head1 MAIN METHODS
+ 
+-
+-
+ =over
+ 
+ =item C<< $parser = I<SomeClass>->new(); >>
+@@ -151,10 +146,7 @@ If you set this attribute to a true valu
+ parsing errors to STDERR. By default, this attribute's value is false,
+ meaning that no output is sent to STDERR.
+ 
+-Note that errors can be noted in an errata section, or sent to STDERR,
+-or both, or neither. So don't think that turning on C<complain_stderr>
+-will turn off C<no_errata_section> or vice versa -- these are
+-independent attributes.
++Setting C<complain_stderr> also sets C<no_errata_section>.
+ 
+ 
+ =item C<< $parser->source_filename >>
+@@ -173,8 +165,51 @@ Pod content in it.
+ This returns true if C<$parser> has read from a source, and come to the
+ end of that source.
+ 
+-=back
++=item C<< $parser->strip_verbatim_indent( I<SOMEVALUE> ) >>
++
++The perlpod spec for a Verbatim paragraph is "It should be reproduced
++exactly...", which means that the whitespace you've used to indent your
++verbatim blocks will be preserved in the output. This can be annoying for
++outputs such as HTML, where that whitespace will remain in front of every
++line. It's an unfortunate case where syntax is turned into semantics.
++
++If the POD your parsing adheres to a consistent indentation policy, you can
++have such indentation stripped from the beginning of every line of your
++verbatim blocks. This method tells Pod::Simple what to strip. For two-space
++indents, you'd use:
++
++  $parser->strip_verbatim_indent('  ');
++
++For tab indents, you'd use a tab character:
++
++  $parser->strip_verbatim_indent("\t");
++
++If the POD is inconsistent about the indentation of verbatim blocks, but you
++have figured out a heuristic to determine how much a particular verbatim block
++is indented, you can pass a code reference instead. The code reference will be
++executed with one argument, an array reference of all the lines in the
++verbatim block, and should return the value to be stripped from each line. For
++example, if you decide that you're fine to use the first line of the verbatim
++block to set the standard for indentation of the rest of the block, you can
++look at the first line and return the appropriate value, like so:
++
++  $new->strip_verbatim_indent(sub {
++      my $lines = shift;
++      (my $indent = $lines->[0]) =~ s/\S.*//;
++      return $indent;
++  });
++
++If you'd rather treat each line individually, you can do that, too, by just
++transforming them in-place in the code reference and returning C<undef>. Say
++that you don't want I<any> lines indented. You can do something like this:
++
++  $new->strip_verbatim_indent(sub {
++      my $lines = shift;
++      sub { s/^\s+// for @{ $lines },
++      return undef;
++  });
+ 
++=back
+ 
+ =head1 CAVEATS
+ 
+@@ -195,10 +230,22 @@ L<Pod::Escapes|Pod::Escapes>
+ 
+ L<perldoc>
+ 
++=head1 SUPPORT
++
++Questions or discussion about POD and Pod::Simple should be sent to the
++pod-people@perl.org mail list. Send an empty email to
++pod-people-subscribe@perl.org to subscribe.
++
++This module is managed in an open GitHub repository,
++L<http://github.com/theory/pod-simple/>. Feel free to fork and contribute, or
++to clone L<git://github.com/theory/pod-simple.git> and send patches!
++
++Patches against Pod::Simple are welcome. Please send bug reports to
++<bug-pod-simple@rt.cpan.org>.
+ 
+ =head1 COPYRIGHT AND DISCLAIMERS
+ 
+-Copyright (c) 2002 Sean M. Burke.  All rights reserved.
++Copyright (c) 2002 Sean M. Burke.
+ 
+ This library is free software; you can redistribute it and/or modify it
+ under the same terms as Perl itself.
+@@ -209,9 +256,10 @@ merchantability or fitness for a particu
+ 
+ =head1 AUTHOR
+ 
+-Original author: Sean M. Burke C<sburke@cpan.org>
++Pod::Simple was created by Sean M. Burke <sburke@cpan.org>.
++But don't bother him, he's retired.
+ 
+-Maintained by: 
++Pod::Simple is maintained by:
+ 
+ =over
+ 
+@@ -219,8 +267,8 @@ Maintained by: 
+ 
+ =item * Hans Dieter Pearcey C<hdp@cpan.org>
+ 
++=item * David E. Wheeler C<dwheeler@cpan.org>
++
+ =back
+ 
+ =cut
+-
+-
+diff -up perl-5.10.1/lib/Pod/Simple/t/corpus.t.bbb perl-5.10.1/lib/Pod/Simple/t/corpus.t
+--- perl-5.10.1/lib/Pod/Simple/t/corpus.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/corpus.t	2010-03-05 13:35:26.996594002 +0100
+@@ -1,3 +1,4 @@
++# Testing a corpus of Pod files
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+         chdir 't';
+@@ -128,9 +129,7 @@ foreach my $f (@testfiles) {
+   
+   next if $f =~ /nonesuch/;
+ 
+-  # foo.xml.out is not a portable filename. foo.xml_out may be a bit more portable
+-
+-  my $outfilename = ($HACK > 1) ? $wouldxml{$f} : "$wouldxml{$f}_out";
++  my $outfilename = ($HACK > 1) ? $wouldxml{$f} : "$wouldxml{$f}\_out";
+   if($HACK) {
+     open OUT, ">$outfilename" or die "Can't write-open $outfilename: $!\n";
+     binmode(OUT);
+diff -up perl-5.10.1/lib/Pod/Simple/t/fcodes_l.t.bbb perl-5.10.1/lib/Pod/Simple/t/fcodes_l.t
+--- perl-5.10.1/lib/Pod/Simple/t/fcodes_l.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/fcodes_l.t	2010-03-05 13:35:26.996594002 +0100
+@@ -1,3 +1,4 @@
++# fcodes L
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+         chdir 't';
+@@ -336,32 +337,32 @@ print "#\n# Now some very complex L<text
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nL<< Perl B<<< Error E<77>essages >>>|perldiag >>\n}),
+- '<Document><Para><L to="perldiag" type="pod">Perl <B>Error Messages</B></L></Para></Document>'
++ '<Document><Para><L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;</Para></Document>',
+ );
+ ok( $x->_out(qq{=pod\n\nL<< Perl\nB<<< Error\nE<77>essages >>>|perldiag >>\n}),
+- '<Document><Para><L to="perldiag" type="pod">Perl <B>Error Messages</B></L></Para></Document>'
++ '<Document><Para><L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nL<< Perl\nB<<< Error\t  E<77>essages >>>|perldiag >>\n}),
+- '<Document><Para><L to="perldiag" type="pod">Perl <B>Error Messages</B></L></Para></Document>'
++ '<Document><Para><L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;</Para></Document>'
+ );
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nL<< SWITCH B<<< E<115>tatements >>>|perlsyn/"Basic I<<<< BLOCKs >>>> and Switch StatementE<115>" >>\n}),
+- '<Document><Para><L section="Basic BLOCKs and Switch Statements" to="perlsyn" type="pod">SWITCH <B>statements</B></L></Para></Document>'
++ '<Document><Para><L content-implicit="yes" section="SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements" type="pod">&#34;SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements&#34;</L>&#62;|perlsyn/&#34;Basic <I>BLOCKs</I> and Switch Statements&#34; &#62;&#62;</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nL<< SWITCH B<<< E<115>tatements >>>|perlsyn/Basic I<<<< BLOCKs >>>> and Switch StatementE<115> >>\n}),
+- '<Document><Para><L section="Basic BLOCKs and Switch Statements" to="perlsyn" type="pod">SWITCH <B>statements</B></L></Para></Document>'
++ '<Document><Para><L content-implicit="yes" section="SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements" type="pod">&#34;SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements&#34;</L>&#62;|perlsyn/Basic <I>BLOCKs</I> and Switch Statements &#62;&#62;</Para></Document>'
+ );
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nL<<< the F<< various >> attributes|/"Member Data" >>>\n}),
+- '<Document><Para><L section="Member Data" type="pod">the <F>various</F> attributes</L></Para></Document>'
++  '<Document><Para><L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L></Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nL<<< the F<< various >> attributes|/Member Data >>>\n}),
+- '<Document><Para><L section="Member Data" type="pod">the <F>various</F> attributes</L></Para></Document>'
++ '<Document><Para><L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L></Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nL<<< the F<< various >> attributes|"Member Data" >>>\n}),
+- '<Document><Para><L section="Member Data" type="pod">the <F>various</F> attributes</L></Para></Document>'
++ '<Document><Para><L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L></Para></Document>'
+ );
+ 
+ ###########################################################################
+@@ -370,51 +371,51 @@ print "#\n# Now some very complex L<text
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nI like L<< Perl B<<< Error E<77>essages >>>|perldiag >>.\n}),
+- '<Document><Para>I like <L to="perldiag" type="pod">Perl <B>Error Messages</B></L>.</Para></Document>'
++ '<Document><Para>I like <L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<< Perl\nB<<< Error\nE<77>essages >>>|perldiag >>.\n}),
+- '<Document><Para>I like <L to="perldiag" type="pod">Perl <B>Error Messages</B></L>.</Para></Document>'
++ '<Document><Para>I like <L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<< Perl\nB<<< Error\t  E<77>essages >>>|perldiag >>.\n}),
+- '<Document><Para>I like <L to="perldiag" type="pod">Perl <B>Error Messages</B></L>.</Para></Document>'
++ '<Document><Para>I like <L content-implicit="yes" section="Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages" type="pod">&#34;Perl B&#60;&#60;&#60; Error E&#60;77&#62;essages&#34;</L>&#62;|perldiag &#62;&#62;.</Para></Document>'
+ );
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nI like L<< SWITCH B<<< E<115>tatements >>>|perlsyn/"Basic I<<<< BLOCKs >>>> and Switch StatementE<115>" >>.\n}),
+- '<Document><Para>I like <L section="Basic BLOCKs and Switch Statements" to="perlsyn" type="pod">SWITCH <B>statements</B></L>.</Para></Document>'
++ '<Document><Para>I like <L content-implicit="yes" section="SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements" type="pod">&#34;SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements&#34;</L>&#62;|perlsyn/&#34;Basic <I>BLOCKs</I> and Switch Statements&#34; &#62;&#62;.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<< SWITCH B<<< E<115>tatements >>>|perlsyn/Basic I<<<< BLOCKs >>>> and Switch StatementE<115> >>.\n}),
+- '<Document><Para>I like <L section="Basic BLOCKs and Switch Statements" to="perlsyn" type="pod">SWITCH <B>statements</B></L>.</Para></Document>'
++ '<Document><Para>I like <L content-implicit="yes" section="SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements" type="pod">&#34;SWITCH B&#60;&#60;&#60; E&#60;115&#62;tatements&#34;</L>&#62;|perlsyn/Basic <I>BLOCKs</I> and Switch Statements &#62;&#62;.</Para></Document>'
+ );
+ 
+ 
+ ok( $x->_out(qq{=pod\n\nI like L<<< the F<< various >> attributes|/"Member Data" >>>.\n}),
+- '<Document><Para>I like <L section="Member Data" type="pod">the <F>various</F> attributes</L>.</Para></Document>'
++ '<Document><Para>I like <L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< the F<< various >> attributes|/Member Data >>>.\n}),
+- '<Document><Para>I like <L section="Member Data" type="pod">the <F>various</F> attributes</L>.</Para></Document>'
++ '<Document><Para>I like <L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< the F<< various >> attributes|"Member Data" >>>.\n}),
+- '<Document><Para>I like <L section="Member Data" type="pod">the <F>various</F> attributes</L>.</Para></Document>'
++ '<Document><Para>I like <L section="Member Data" type="pod">the F&#60;&#60; various &#62;&#62; attributes</L>.</Para></Document>'
+ );
+ 
+ ok( $x->_out(qq{=pod\n\nI like L<<< B<text>s|http://text.com >>>.\n}),
+-'<Document><Para>I like <L to="http://text.com" type="url"><B>text</B>s</L>.</Para></Document>'
++'<Document><Para>I like <L to="http://text.com" type="url">B&#60;text&#62;s</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< text|https://text.com/1/2 >>>.\n}),
+ '<Document><Para>I like <L to="https://text.com/1/2" type="url">text</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< I<text>|http://text.com >>>.\n}),
+-'<Document><Para>I like <L to="http://text.com" type="url"><I>text</I></L>.</Para></Document>'
++'<Document><Para>I like <L to="http://text.com" type="url">I&#60;text&#62;</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< C<text>|http://text.com >>>.\n}),
+-'<Document><Para>I like <L to="http://text.com" type="url"><C>text</C></L>.</Para></Document>'
++'<Document><Para>I like <L to="http://text.com" type="url">C&#60;text&#62;</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< I<tI<eI<xI<t>>>>|mailto:earlE<64>text.com >>>.\n}),
+-'<Document><Para>I like <L to="mailto:earl@text.com" type="url"><I>t<I>e<I>x<I>t</I></I></I></I></L>.</Para></Document>'
++'<Document><Para>I like <L to="mailto:earlE&#60;64&#62;text.com" type="url">I&#60;tI&#60;eI&#60;xI&#60;t&#62;&#62;&#62;&#62;</L>.</Para></Document>'
+ );
+ ok( $x->_out(qq{=pod\n\nI like L<<< textZ<>|http://text.com >>>.\n}),
+-'<Document><Para>I like <L to="http://text.com" type="url">text</L>.</Para></Document>'
++'<Document><Para>I like <L to="http://text.com" type="url">textZ&#60;&#62;</L>.</Para></Document>'
+ );
+ 
+ 
+diff -up perl-5.10.1/lib/Pod/Simple/t/fcodes_s.t.bbb perl-5.10.1/lib/Pod/Simple/t/fcodes_s.t
+--- perl-5.10.1/lib/Pod/Simple/t/fcodes_s.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/fcodes_s.t	2010-03-05 13:35:26.996594002 +0100
+@@ -1,3 +1,4 @@
++# fcodes S
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+         chdir 't';
+@@ -7,7 +8,7 @@ BEGIN {
+ 
+ use strict;
+ use Test;
+-BEGIN { plan tests => 14 };
++BEGIN { plan tests => 80 };
+ 
+ #use Pod::Simple::Debug (6);
+ 
+@@ -82,7 +83,7 @@ $x->preserve_whitespace(1);
+ # RT#25679
+ ok(
+   $x->_out(<<END
+-=head1 The Tk::mega manpage showed me how C<< SE<lt> E<gt> foo >> is being rendered
++=head1 The Tk::mega manpage showed me how C<< S< > foo >> is being rendered
+ 
+ Both pod2text and pod2man S<    > lose the rest of the line
+ 
+@@ -101,6 +102,362 @@ Do they always      lose the rest of the
+ END
+ );
+ 
++$x = 'Pod::Simple::Text';
++# Test text output of links.
++ok(
++    $x->_out(qq{=pod\n\nL<Net::Ping>\n}),
++    "    Net::Ping\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nBe sure to read the L<Net::Ping> docs\n}),
++    "    Be sure to read the Net::Ping docs\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<http://www.perl.com>\n}),
++    "    http://www.perl.com\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<crontab(5)>\n}),
++    "    crontab(5)\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<Net::Ping/Ping-pong>\n}),
++    qq{    "Ping-pong" in Net::Ping\n\n}
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL</"Object Methods">\n}),
++    qq{    "Object Methods"\n\n}
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL</Object Methods>\n}),
++    qq{    "Object Methods"\n\n}
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<"Object Methods">\n}),
++    qq{    "Object Methods"\n\n}
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<Net::Ping/Ping-E<112>ong>\n}),
++    qq{    "Ping-pong" in Net::Ping\n\n}
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<news:comp.lang.perl.misc>\n}),
++    "    news:comp.lang.perl.misc\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<http://www.perl.org>\n}),
++    "    http://www.perl.org\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nSee L<http://www.perl.org>\n}),
++    "    See http://www.perl.org\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/>\n}),
++    "    http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<news:compE<46>lang.perl.misc>\n}),
++    "    news:comp.lang.perl.misc\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<http://wwwE<46>perl.org>\n}),
++    "    http://www.perl.org\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<things|crontab(5)>\n}),
++    "    things\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<things|crontab(5)/ENVIRONMENT>\n}),
++    "    things\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<Perl Error Messages|perldiag>\n}),
++    "    Perl Error Messages\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<Perl\nError\nMessages|perldiag>\n}),
++    "    Perl Error Messages\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<Perl\nError\t  Messages|perldiag>\n}),
++    "    Perl Error Messages\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nL<perl.org|http://www.perl.org>\n}),
++    "    perl.org <http://www.perl.org>\n\n"
++);
++
++ok(
++    $x->_out(qq{=pod\n\nSee L<perl.org|http://www.perl.org>\n}),
++    "    See perl.org <http://www.perl.org>\n\n"
++);
++
++
++# Test HTML output of links.
++use Pod::Simple::HTML;
++my $PERLDOC = "http://search.cpan.org/perldoc";
++my $MANURL = "http://man.he.net/man";
++sub x ($) {
++    Pod::Simple::HTML->_out(
++        sub {  $_[0]->bare_output(1)  },
++        "=pod\n\n$_[0]",
++    )
++}
++
++ok(
++    x(qq{L<Net::Ping>\n}),
++    qq{\n<p><a href="$PERLDOC?Net%3A%3APing" class="podlinkpod"\n>Net::Ping</a></p>\n}
++);
++
++ok(
++    x(qq{Be sure to read the L<Net::Ping> docs\n}),
++    qq{\n<p>Be sure to read the <a href="$PERLDOC?Net%3A%3APing" class="podlinkpod"\n>Net::Ping</a> docs</p>\n}
++);
++
++ok(
++    x(qq{L<http://www.perl.com>\n}),
++    qq{\n<p><a href="http://www.perl.com" class="podlinkurl"\n>http://www.perl.com</a></p>\n}
++);
++
++ok(
++    x(qq{L<crontab(5)>\n}),
++    qq{\n<p><a href="${MANURL}5/crontab" class="podlinkman"\n>crontab(5)</a></p>\n}
++);
++
++ok(
++    x(qq{L<Net::Ping/Ping-pong>\n}),
++    qq{\n<p><a href="$PERLDOC?Net%3A%3APing#Ping-pong" class="podlinkpod"\n>&#34;Ping-pong&#34; in Net::Ping</a></p>\n}
++);
++
++ok(
++    x(qq{L</"Object Methods">\n}),
++    qq{\n<p><a href="#Object_Methods" class="podlinkpod"\n>&#34;Object Methods&#34;</a></p>\n}
++);
++
++ok(
++    x(qq{L</Object Methods>\n}),
++    qq{\n<p><a href="#Object_Methods" class="podlinkpod"\n>&#34;Object Methods&#34;</a></p>\n}
++);
++
++ok(
++    x(qq{L<"Object Methods">\n}),
++    qq{\n<p><a href="#Object_Methods" class="podlinkpod"\n>&#34;Object Methods&#34;</a></p>\n}
++);
++
++ok(
++    x(qq{L<Net::Ping/Ping-E<112>ong>\n}),
++    qq{\n<p><a href="$PERLDOC?Net%3A%3APing#Ping-pong" class="podlinkpod"\n>&#34;Ping-pong&#34; in Net::Ping</a></p>\n}
++);
++
++ok(
++    x(qq{L<news:comp.lang.perl.misc>\n}),
++    qq{\n<p><a href="news:comp.lang.perl.misc" class="podlinkurl"\n>news:comp.lang.perl.misc</a></p>\n}
++);
++
++ok(
++    x(qq{L<http://www.perl.org>\n}),
++    qq{\n<p><a href="http://www.perl.org" class="podlinkurl"\n>http://www.perl.org</a></p>\n}
++);
++
++ok(
++    x(qq{See L<http://www.perl.org>\n}),
++    qq{\n<p>See <a href="http://www.perl.org" class="podlinkurl"\n>http://www.perl.org</a></p>\n}
++);
++
++ok(
++    x(qq{L<http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/>\n}),
++    qq{\n<p><a href="http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/" class="podlinkurl"\n>http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/</a></p>\n}
++);
++
++ok(
++    x(qq{L<news:compE<46>lang.perl.misc>\n}),
++    qq{\n<p><a href="news:comp.lang.perl.misc" class="podlinkurl"\n>news:comp.lang.perl.misc</a></p>\n}
++);
++
++ok(
++    x(qq{L<http://wwwE<46>perl.org>\n}),
++    qq{\n<p><a href="http://www.perl.org" class="podlinkurl"\n>http://www.perl.org</a></p>\n}
++);
++
++ok(
++    x(qq{L<things|crontab(5)>\n}),
++    qq{\n<p><a href="${MANURL}5/crontab" class="podlinkman"\n>things</a></p>\n}
++);
++
++ok(
++    x(qq{L<things|crontab(5)/ENVIRONMENT>\n}),
++    qq{\n<p><a href="${MANURL}5/crontab" class="podlinkman"\n>things</a></p>\n}
++);
++
++ok(
++    x(qq{L<Perl Error Messages|perldiag>\n}),
++    qq{\n<p><a href="$PERLDOC?perldiag" class="podlinkpod"\n>Perl Error Messages</a></p>\n}
++);
++
++ok(
++    x(qq{L<Perl\nError\nMessages|perldiag>\n}),
++    qq{\n<p><a href="$PERLDOC?perldiag" class="podlinkpod"\n>Perl Error Messages</a></p>\n}
++);
++
++ok(
++    x(qq{L<Perl\nError\t  Messages|perldiag>\n}),
++    qq{\n<p><a href="$PERLDOC?perldiag" class="podlinkpod"\n>Perl Error Messages</a></p>\n}
++);
++
++ok(
++    x(qq{L<perl.org|http://www.perl.org>\n}),
++    qq{\n<p><a href="http://www.perl.org" class="podlinkurl"\n>perl.org</a></p>\n}
++);
++
++ok(
++    x(qq{See L<perl.org|http://www.perl.org>\n}),
++    qq{\n<p>See <a href="http://www.perl.org" class="podlinkurl"\n>perl.org</a></p>\n}
++);
++
++# Test link output in XHTML.
++use Pod::Simple::XHTML;
++sub o ($) {
++    my $p = Pod::Simple::XHTML->new;
++    $p->html_header("");
++    $p->html_footer("");
++    my $results = '';
++    $p->output_string( \$results ); # Send the resulting output to a string
++    $p->parse_string_document("=pod\n\n$_[0]");
++    return $results;
++}
++
++ok(
++    o(qq{L<Net::Ping>}),
++    qq{<p><a href="$PERLDOC?Net::Ping">Net::Ping</a></p>\n\n}
++);
++
++ok(
++    o(qq{Be sure to read the L<Net::Ping> docs}),
++    qq{<p>Be sure to read the <a href="$PERLDOC?Net::Ping">Net::Ping</a> docs</p>\n\n}
++);
++
++ok(
++    o(qq{L<http://www.perl.com>}),
++    qq{<p><a href="http://www.perl.com">http://www.perl.com</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<crontab(5)>}),
++    qq{<p><a href="${MANURL}5/crontab">crontab(5)</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<Net::Ping/Ping-pong>}),
++    qq{<p><a href="$PERLDOC?Net::Ping#Ping-pong">&quot;Ping-pong&quot; in Net::Ping</a></p>\n\n}
++);
++
++ok(
++    o(qq{L</"Object Methods">}),
++    qq{<p><a href="#Object-Methods">&quot;Object Methods&quot;</a></p>\n\n}
++);
++
++ok(
++    o(qq{L</Object Methods>}),
++    qq{<p><a href="#Object-Methods">&quot;Object Methods&quot;</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<"Object Methods">}),
++    qq{<p><a href="#Object-Methods">&quot;Object Methods&quot;</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<Net::Ping/Ping-E<112>ong>}),
++    qq{<p><a href="$PERLDOC?Net::Ping#Ping-pong">&quot;Ping-pong&quot; in Net::Ping</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<news:comp.lang.perl.misc>}),
++    qq{<p><a href="news:comp.lang.perl.misc">news:comp.lang.perl.misc</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<http://www.perl.org>}),
++    qq{<p><a href="http://www.perl.org">http://www.perl.org</a></p>\n\n}
++);
++
++ok(
++    o(qq{See L<http://www.perl.org>}),
++    qq{<p>See <a href="http://www.perl.org">http://www.perl.org</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/>}),
++    qq{<p><a href="http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/">http://www.perl.org/CPAN/authors/id/S/SB/SBURKE/</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<news:compE<46>lang.perl.misc>}),
++    qq{<p><a href="news:comp.lang.perl.misc">news:comp.lang.perl.misc</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<http://wwwE<46>perl.org>}),
++    qq{<p><a href="http://www.perl.org">http://www.perl.org</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<things|crontab(5)>}),
++    qq{<p><a href="${MANURL}5/crontab">things</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<things|crontab(5)/ENVIRONMENT>}),
++    qq{<p><a href="${MANURL}5/crontab">things</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<Perl Error Messages|perldiag>}),
++    qq{<p><a href="$PERLDOC?perldiag">Perl Error Messages</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<Perl\nError\nMessages|perldiag>}),
++    qq{<p><a href="$PERLDOC?perldiag">Perl Error Messages</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<Perl\nError\t  Messages|perldiag>}),
++    qq{<p><a href="$PERLDOC?perldiag">Perl Error Messages</a></p>\n\n}
++);
++
++ok(
++    o(qq{L<perl.org|http://www.perl.org>}),
++    qq{<p><a href="http://www.perl.org">perl.org</a></p>\n\n}
++);
++
++ok(
++    o(qq{See L<perl.org|http://www.perl.org>}),
++    qq{<p>See <a href="http://www.perl.org">perl.org</a></p>\n\n}
++);
++
+ print "# Wrapping up... one for the road...\n";
+ ok 1;
+ print "# --- Done with ", __FILE__, " --- \n";
+diff -up perl-5.10.1/lib/Pod/Simple/t/fcodes.t.bbb perl-5.10.1/lib/Pod/Simple/t/fcodes.t
+--- perl-5.10.1/lib/Pod/Simple/t/fcodes.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/fcodes.t	2010-03-05 13:35:26.997594002 +0100
+@@ -7,7 +7,7 @@ BEGIN {
+ 
+ use strict;
+ use Test;
+-BEGIN { plan tests => 18 };
++BEGIN { plan tests => 21 };
+ 
+ #use Pod::Simple::Debug (5);
+ 
+@@ -81,14 +81,24 @@ ok( Pod::Simple::XMLOutStream->_out("=po
+ 
+ print "# Without any nesting, but with Z's, and odder whitespace...\n";
+ ok( Pod::Simple::XMLOutStream->_out("=pod\n\nF<< aZ<> >>C<<< Z<>b >>>I<<<< c  >>>>B<< d \t >>X<<\ne >>\n"),
+- '<Document><Para><F>a</F><C>b</C><I>c</I><B>d</B><X>e</X></Para></Document>'
++  '<Document><Para><F>aZ&#60;&#62;</F><C>Z&#60;&#62;b</C><I>c</I><B>d</B><X>e</X></Para></Document>'
+ );
+ 
+ print "# With nesting and Z's, and odder whitespace...\n";
+ ok( Pod::Simple::XMLOutStream->_out("=pod\n\nF<< aZ<> >>C<<< Z<>bZ<>B<< d \t >>X<<\ne >> >>>I<<<< c  >>>>\n"),
+- '<Document><Para><F>a</F><C>b<B>d</B><X>e</X></C><I>c</I></Para></Document>'
++ "<Document><Para><F>aZ&#60;&#62;</F><C>Z&#60;&#62;bZ&#60;&#62;B&#60;&#60; d &#62;&#62;X&#60;&#60; e &#62;&#62;</C><I>c</I></Para></Document>"
+ );
+ 
++print "# Regression https://rt.cpan.org/Ticket/Display.html?id=12239\n";
++ok( Pod::Simple::XMLOutStream->_out("=pod\n\nC<<< foo->bar >>>\n"),
++ '<Document><Para><C>foo-&#62;bar</C></Para></Document>'
++);
++ok( Pod::Simple::XMLOutStream->_out("=pod\n\nC<<< C<foo> >>>\n"),
++ '<Document><Para><C>C&#60;foo&#62;</C></Para></Document>'
++);
++ok( Pod::Simple::XMLOutStream->_out("=pod\n\nC<<< C<<foo>> >>>\n"),
++ '<Document><Para><C>C&#60;&#60;foo&#62;&#62;</C></Para></Document>'
++);
+ 
+ print "# Misc...\n";
+ ok( Pod::Simple::XMLOutStream->_out(
+diff -up perl-5.10.1/lib/Pod/Simple/t/fullstop.t.bbb perl-5.10.1/lib/Pod/Simple/t/fullstop.t
+--- perl-5.10.1/lib/Pod/Simple/t/fullstop.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/fullstop.t	2010-03-05 13:38:15.763593420 +0100
+@@ -1,57 +0,0 @@
+-BEGIN {
+-    if($ENV{PERL_CORE}) {
+-        chdir 't';
+-        @INC = '../lib';
+-    }
+-}
+-
+-use strict;
+-use Test;
+-BEGIN { plan tests => 11 };
+-
+-#use Pod::Simple::Debug (6);
+-
+-print "# Hi, I'm ", __FILE__, "\n";
+-ok 1;
+-
+-use Pod::Simple;
+-use Pod::Simple::DumpAsXML;
+-use Pod::Simple::XMLOutStream;
+-print "# Pod::Simple version $Pod::Simple::VERSION\n";
+-sub e ($$) { Pod::Simple::DumpAsXML->_duo(@_) }
+-
+-&ok( e "", "" );
+-&ok( e "\n", "", );
+-
+-die unless ok !! Pod::Simple::XMLOutStream->can('fullstop_space_harden');
+-sub harden { $_[0]->fullstop_space_harden(1) }
+-
+-print "# Test that \".  \" always compacts without the hardening on...\n";
+-
+-ok( Pod::Simple::XMLOutStream->_out("\n=pod\n\nShe set me a message about the M.D.  I\ncalled back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D. I called back!</Para></Document>}
+-);
+-ok( Pod::Simple::XMLOutStream->_out("\n=pod\n\nShe set me a message about the M.D. I called back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D. I called back!</Para></Document>}
+-);
+-ok( Pod::Simple::XMLOutStream->_out("\n=pod\n\nShe set me a message about the M.D.\nI called back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D. I called back!</Para></Document>}
+-);
+-
+-
+-print "# Now testing with the hardening on...\n";
+-
+-ok( Pod::Simple::XMLOutStream->_out(\&harden, "\n=pod\n\nShe set me a message about the M.D.  I\ncalled back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D.&#160; I called back!</Para></Document>}
+-);
+-ok( Pod::Simple::XMLOutStream->_out(\&harden, "\n=pod\n\nShe set me a message about the M.D. I called back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D. I called back!</Para></Document>}
+-);
+-ok( Pod::Simple::XMLOutStream->_out(\&harden, "\n=pod\n\nShe set me a message about the M.D.\nI called back!\n"),
+-  qq{<Document><Para>She set me a message about the M.D. I called back!</Para></Document>}
+-);
+-
+-
+-print "# Byebye\n";
+-ok 1;
+-
+diff -up perl-5.10.1/lib/Pod/Simple/t/html01.t.bbb perl-5.10.1/lib/Pod/Simple/t/html01.t
+--- perl-5.10.1/lib/Pod/Simple/t/html01.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/html01.t	2010-03-05 13:35:26.998594002 +0100
+@@ -1,4 +1,4 @@
+-# t/html-para.t
++# Testing HTML paragraphs
+ 
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+@@ -9,14 +9,16 @@ BEGIN {
+ 
+ use strict;
+ use Test;
+-BEGIN { plan tests => 8 };
++BEGIN { plan tests => 11 };
+ 
+ #use Pod::Simple::Debug (10);
+ 
+ use Pod::Simple::HTML;
+ 
+-sub x ($) { Pod::Simple::HTML->_out(
+-  sub{  $_[0]->bare_output(1)  },
++sub x ($;&) {
++  my $code = $_[1];
++  Pod::Simple::HTML->_out(
++  sub{  $_[0]->bare_output(1); $code->($_[0]) if $code  },
+   "=pod\n\n$_[0]",
+ ) }
+ 
+@@ -52,6 +54,11 @@ ok(x(
+   "heading building"
+ );
+ 
++ok(x('=head1 This is a heading', sub { $_[0]->html_h_level(2) })
++ => q{/\s*<h2><a[^<>]+>This\s+is\s+a\s+heading</a></h2>\s*$/},
++  "heading building"
++);
++
+ ok(x(
+ '=head2 This is a heading too')
+  => q{/\s*<h2><a[^<>]+>This\s+is\s+a\s+heading\s+too</a></h2>\s*$/},
+@@ -71,6 +78,40 @@ ok(x(
+   "heading building"
+ );
+ 
++ok(
++    x("=over 4\n\n=item one\n\n=item two\n\nHello\n\n=back\n"),
++    q{
++<dl>
++<dt><a name="one"
++>one</a></dt>
++
++<dd>
++<dt><a name="two"
++>two</a></dt>
++
++<dd>
++<p>Hello</p>
++</dd>
++</dl>
++}
++);
++
++# Check subclass.
++SUBCLASS: {
++    package My::Pod::HTML;
++    use vars '@ISA', '$VERSION';
++    @ISA = ('Pod::Simple::HTML');
++    $VERSION = '0.01';
++    sub do_section { 'howdy' }
++}
++
++ok(
++    My::Pod::HTML->_out(
++        sub{  $_[0]->bare_output(1)  },
++        "=pod\n\n=over\n\n=item Foo\n\n",
++    ),
++    "\n<dl>\n<dt><a name=\"howdy\"\n>Foo</a></dt>\n</dl>\n",
++);
+ 
+ print "# And one for the road...\n";
+ ok 1;
+diff -up perl-5.10.1/lib/Pod/Simple/t/html02.t.bbb perl-5.10.1/lib/Pod/Simple/t/html02.t
+--- perl-5.10.1/lib/Pod/Simple/t/html02.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/html02.t	2010-03-05 13:35:26.999594002 +0100
+@@ -1,4 +1,4 @@
+-# t/html-styles.t
++# Testing HTML text styles
+ 
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+diff -up perl-5.10.1/lib/Pod/Simple/t/html03.t.bbb perl-5.10.1/lib/Pod/Simple/t/html03.t
+--- perl-5.10.1/lib/Pod/Simple/t/html03.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/html03.t	2010-03-05 13:35:26.999594002 +0100
+@@ -1,4 +1,4 @@
+-# t/html-para.t
++# Testing HTML titles
+ 
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+diff -up perl-5.10.1/lib/Pod/Simple/t/htmlbat.t.bbb perl-5.10.1/lib/Pod/Simple/t/htmlbat.t
+--- perl-5.10.1/lib/Pod/Simple/t/htmlbat.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/htmlbat.t	2010-03-05 13:35:26.999594002 +0100
+@@ -8,18 +8,19 @@ BEGIN {
+ 
+ # Time-stamp: "2004-05-24 02:07:47 ADT"
+ use strict;
++my $DEBUG = 0;
+ 
+ #sub Pod::Simple::HTMLBatch::DEBUG () {5};
+ 
+ use Test;
+-BEGIN { plan tests => 8 }
++BEGIN { plan tests => 17 }
+ 
+ require Pod::Simple::HTMLBatch;;
+ 
+ use File::Spec;
+ use Cwd;
+ my $cwd = cwd();
+-print "# CWD: $cwd\n";
++print "# CWD: $cwd\n" if $DEBUG;
+ 
+ my $t_dir;
+ my $corpus_dir;
+@@ -38,7 +39,7 @@ foreach my $t_maybe (
+   next unless -e $corpus_dir;
+   last;
+ }
+-print "# OK, found the test corpus as $corpus_dir\n";
++print "# OK, found the test corpus as $corpus_dir\n" if $DEBUG;
+ ok 1;
+ 
+ my $outdir;
+@@ -54,20 +55,31 @@ END {
+ }
+ 
+ ok 1;
+-print "# Output dir: $outdir\n";
++print "# Output dir: $outdir\n" if $DEBUG;
+ 
+ mkdir $outdir, 0777 or die "Can't mkdir $outdir: $!";
+ 
+-print "# Converting $corpus_dir => $outdir\n";
++print "# Converting $corpus_dir => $outdir\n" if $DEBUG;
+ my $conv = Pod::Simple::HTMLBatch->new;
+ $conv->verbose(0);
++$conv->index(1);
+ $conv->batch_convert( [$corpus_dir], $outdir );
+ ok 1;
+-print "# OK, back from converting.\n";
++print "# OK, back from converting.\n" if $DEBUG;
+ 
+ my @files;
+ use File::Find;
+-find( sub { push @files, $File::Find::name; return }, $outdir );
++find( sub {
++      push @files, $File::Find::name;
++      if (/[.]html$/ && $_ !~ /perl|index/) {
++          # Make sure an index was generated.
++          open HTML, $_ or die "Cannot open $_: $!\n";
++          my $html = do { local $/; <HTML> };
++          close HTML;
++          ok $html =~ /<div class='indexgroup'>/;
++      }
++      return;
++}, $outdir );
+ 
+ {
+   my $long = ( grep m/zikzik\./i, @files )[0];
+@@ -79,19 +91,29 @@ find( sub { push @files, $File::Find::na
+   }
+ }
+ 
+-print "#Produced in $outdir ...\n";
+-foreach my $f (sort @files) {
+-  print "#   $f\n";
++if ($DEBUG) {
++    print "#Produced in $outdir ...\n";
++    foreach my $f (sort @files) {
++        print "#   $f\n";
++    }
++    print "# (", scalar(@files), " items total)\n";
+ }
+-print "# (", scalar(@files), " items total)\n";
+ 
+ # Some minimal sanity checks:
+ ok scalar(grep m/\.css/i, @files) > 5;
+ ok scalar(grep m/\.html?/i, @files) > 5;
+ ok scalar grep m{squaa\W+Glunk.html?}i, @files;
+ 
++if (my @long = grep { /^[^.]{9,}/ } map { s{^[^/]/}{} } @files) {
++    ok 0;
++    print "#    File names too long:\n",
++        map { "#         $_\n" } @long;
++} else {
++    ok 1;
++}
++
+ # use Pod::Simple;
+ # *pretty = \&Pod::Simple::BlackBox::pretty;
+ 
+-print "# Bye from ", __FILE__, "\n";
++print "# Bye from ", __FILE__, "\n" if $DEBUG;
+ ok 1;
+diff -up perl-5.10.1/lib/Pod/Simple/t/items02.t.bbb perl-5.10.1/lib/Pod/Simple/t/items02.t
+--- perl-5.10.1/lib/Pod/Simple/t/items02.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/items02.t	2010-03-05 13:35:26.999594002 +0100
+@@ -1,44 +1,44 @@
+-#!perl
+-BEGIN {
+-    if($ENV{PERL_CORE}) {
+-        chdir 't';
+-        @INC = '../lib';
+-    }
+-}
+-
+-use strict;
+-use Test;
+-BEGIN { plan tests => 4 };
+-
+-my $d;
+-#use Pod::Simple::Debug (\$d,0);
+-
+-ok 1;
+-
+-use Pod::Simple::DumpAsXML;
+-use Pod::Simple::XMLOutStream;
+-print "# Pod::Simple version $Pod::Simple::VERSION\n";
+-sub e ($$) { Pod::Simple::DumpAsXML->_duo(@_) }
+-
+-my $x = 'Pod::Simple::XMLOutStream';
+-
+-print "##### Tests for =item directives via class $x\n";
+-
+-$Pod::Simple::XMLOutStream::ATTR_PAD   = ' ';
+-$Pod::Simple::XMLOutStream::SORT_ATTRS = 1; # for predictably testable output
+-
+-
+-print "#\n# Tests for =item [number] that are icky...\n";
+-ok( $x->_out("\n=over\n\n=item 5\n\nStuff\n\n=cut\n\nCrunk\nZorp\n\n=item 4\n\nQuux\n\n=back\n\n"),
+-    '<Document><over-text indent="4"><item-text>5</item-text><Para>Stuff</Para><item-text>4</item-text><Para>Quux</Para></over-text></Document>'
+-);
+-
+-ok( $x->_out("\n=over\n\n=item 5.\n\nStuff\n\n=cut\n\nCrunk\nZorp\n\n=item 4.\n\nQuux\n\n=back\n\n"),
+-    '<Document><over-text indent="4"><item-text>5.</item-text><Para>Stuff</Para><item-text>4.</item-text><Para>Quux</Para></over-text></Document>'
+-);
+-
+-
+-print "# Wrapping up... one for the road...\n";
+-ok 1;
+-print "# --- Done with ", __FILE__, " --- \n";
+-
++# Testing the =item directive
++BEGIN {
++    if($ENV{PERL_CORE}) {
++        chdir 't';
++        @INC = '../lib';
++    }
++}
++
++use strict;
++use Test;
++BEGIN { plan tests => 4 };
++
++my $d;
++#use Pod::Simple::Debug (\$d,0);
++
++ok 1;
++
++use Pod::Simple::DumpAsXML;
++use Pod::Simple::XMLOutStream;
++print "# Pod::Simple version $Pod::Simple::VERSION\n";
++sub e ($$) { Pod::Simple::DumpAsXML->_duo(@_) }
++
++my $x = 'Pod::Simple::XMLOutStream';
++
++print "##### Tests for =item directives via class $x\n";
++
++$Pod::Simple::XMLOutStream::ATTR_PAD   = ' ';
++$Pod::Simple::XMLOutStream::SORT_ATTRS = 1; # for predictably testable output
++
++
++print "#\n# Tests for =item [number] that are icky...\n";
++ok( $x->_out("\n=over\n\n=item 5\n\nStuff\n\n=cut\n\nCrunk\nZorp\n\n=item 4\n\nQuux\n\n=back\n\n"),
++    '<Document><over-text indent="4"><item-text>5</item-text><Para>Stuff</Para><item-text>4</item-text><Para>Quux</Para></over-text></Document>'
++);
++
++ok( $x->_out("\n=over\n\n=item 5.\n\nStuff\n\n=cut\n\nCrunk\nZorp\n\n=item 4.\n\nQuux\n\n=back\n\n"),
++    '<Document><over-text indent="4"><item-text>5.</item-text><Para>Stuff</Para><item-text>4.</item-text><Para>Quux</Para></over-text></Document>'
++);
++
++
++print "# Wrapping up... one for the road...\n";
++ok 1;
++print "# --- Done with ", __FILE__, " --- \n";
++
+diff -up perl-5.10.1/lib/Pod/Simple/t/linkclas.t.bbb perl-5.10.1/lib/Pod/Simple/t/linkclas.t
+--- perl-5.10.1/lib/Pod/Simple/t/linkclas.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/linkclas.t	2010-03-05 13:35:26.999594002 +0100
+@@ -1,3 +1,4 @@
++# Testing the LinkSection class
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+         chdir 't';
+diff -up perl-5.10.1/lib/Pod/Simple/t/pulltitl.t.bbb perl-5.10.1/lib/Pod/Simple/t/pulltitl.t
+--- perl-5.10.1/lib/Pod/Simple/t/pulltitl.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/pulltitl.t	2010-03-05 13:35:27.000594002 +0100
+@@ -7,7 +7,7 @@ BEGIN {
+ 
+ use strict;
+ use Test;
+-BEGIN { plan tests => 104 };
++BEGIN { plan tests => 114 };
+ 
+ #use Pod::Simple::Debug (5);
+ 
+@@ -29,6 +29,7 @@ my $p = Pod::Simple::PullParser->new;
+ $p->set_source( \qq{\n=head1 NAME\n\nBzorch\n\n=pod\n\nLala\n\n\=cut\n} );
+ 
+ ok $p->get_title(), 'Bzorch';
++
+ my $t;
+ 
+ ok( $t = $p->get_token);
+@@ -48,6 +49,29 @@ ok( $t && $t->type eq 'text' && $t->text
+ ###########################################################################
+ 
+ {
++print "# Testing a set with nocase, at line ", __LINE__, "\n";
++my $p = Pod::Simple::PullParser->new;
++$p->set_source( \qq{\n=head1 Name\n\nShazbot\n\n=pod\n\nLala\n\n\=cut\n} );
++
++ok $p->get_title(nocase => 1), 'Shazbot';
++
++ok( my $t = $p->get_token);
++ok( $t && $t->type, 'start');
++ok( $t && $t->type eq 'start' && $t->tagname, 'Document' );
++
++ok( $t = $p->get_token);
++ok( $t && $t->type, 'start');
++ok( $t && $t->type eq 'start' && $t->tagname, 'head1' );
++
++ok( $t = $p->get_token);
++ok( $t && $t->type, 'text');
++ok( $t && $t->type eq 'text' && $t->text, 'Name' );
++
++}
++
++###########################################################################
++
++{
+ print "# Testing another set, at line ", __LINE__, "\n";
+ 
+ my $p = Pod::Simple::PullParser->new;
+diff -up perl-5.10.1/lib/Pod/Simple/t/search22.t.bbb perl-5.10.1/lib/Pod/Simple/t/search22.t
+--- perl-5.10.1/lib/Pod/Simple/t/search22.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/search22.t	2010-03-05 13:35:27.000594002 +0100
+@@ -107,8 +107,9 @@ ok( ($name2where->{'perlthng'}    || 'hu
+ ok( ($name2where->{'squaa::Vliff'} || 'huh???'), '/[^\^]testlib1/' );
+ 
+ # Some sanity:
+-ok( ($name2where->{'squaa::Wowo'}  || 'huh???'), '/testlib2/' );
+-
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0, 
++    ($name2where->{'squaa::Wowo'}  || 'huh???'), 
++    '/testlib2/';
+ 
+ 
+ 
+diff -up perl-5.10.1/lib/Pod/Simple/t/search25.t.bbb perl-5.10.1/lib/Pod/Simple/t/search25.t
+--- perl-5.10.1/lib/Pod/Simple/t/search25.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/search25.t	2010-03-05 13:35:27.000594002 +0100
+@@ -77,12 +77,16 @@ print $p;
+ 
+ {
+ my $names = join "|", sort keys %$name2where;
+-ok $names, "squaa::Glunk|squaa::Vliff|squaa::Wowo";
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0, 
++      $names, 
++      "squaa::Glunk|squaa::Vliff|squaa::Wowo";
+ }
+ 
+ {
+ my $names = join "|", sort values %$where2name;
+-ok $names, "squaa::Glunk|squaa::Vliff|squaa::Vliff|squaa::Vliff|squaa::Wowo";
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0, 
++     $names, 
++     "squaa::Glunk|squaa::Vliff|squaa::Vliff|squaa::Vliff|squaa::Wowo";
+ 
+ my %count;
+ for(values %$where2name) { ++$count{$_} };
+@@ -102,7 +106,9 @@ ok ! $name2where->{'squaa'};  # because 
+ 
+ ok( ($name2where->{'squaa::Vliff'} || 'huh???'), '/[^\^]testlib1/' );
+ 
+-ok( ($name2where->{'squaa::Wowo'}  || 'huh???'), '/testlib2/' );
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0,
++    ($name2where->{'squaa::Wowo'}  || 'huh???'), 
++    '/testlib2/';
+ 
+ 
+ print "# OK, bye from ", __FILE__, "\n";
+diff -up perl-5.10.1/lib/Pod/Simple/t/search27.t.bbb perl-5.10.1/lib/Pod/Simple/t/search27.t
+--- perl-5.10.1/lib/Pod/Simple/t/search27.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/search27.t	2010-03-05 13:35:27.001594002 +0100
+@@ -74,12 +74,16 @@ print $p;
+ 
+ {
+ my $names = join "|", sort keys %$name2where;
+-ok $names, "squaa|squaa::Glunk|squaa::Vliff|squaa::Wowo";
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0,
++     $names, 
++     "squaa|squaa::Glunk|squaa::Vliff|squaa::Wowo";
+ }
+ 
+ {
+ my $names = join "|", sort values %$where2name;
+-ok $names, "squaa|squaa::Glunk|squaa::Vliff|squaa::Vliff|squaa::Vliff|squaa::Wowo";
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0, 
++     $names, 
++     "squaa|squaa::Glunk|squaa::Vliff|squaa::Vliff|squaa::Vliff|squaa::Wowo";
+ 
+ my %count;
+ for(values %$where2name) { ++$count{$_} };
+@@ -99,7 +103,9 @@ ok   $name2where->{'squaa'};  # because 
+ 
+ ok( ($name2where->{'squaa::Vliff'} || 'huh???'), '/[^\^]testlib1/' );
+ 
+-ok( ($name2where->{'squaa::Wowo'}  || 'huh???'), '/testlib2/' );
++skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0,
++     ($name2where->{'squaa::Wowo'}  || 'huh???'), 
++     '/testlib2/';
+ 
+ 
+ print "# OK, bye from ", __FILE__, "\n";
+diff -up perl-5.10.1/lib/Pod/Simple/t/search50.t.bbb perl-5.10.1/lib/Pod/Simple/t/search50.t
+--- perl-5.10.1/lib/Pod/Simple/t/search50.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/search50.t	2010-03-05 13:35:27.001594002 +0100
+@@ -11,7 +11,7 @@ use strict;
+ 
+ use Pod::Simple::Search;
+ use Test;
+-BEGIN { plan tests => 7 }
++BEGIN { plan tests => 8 }
+ 
+ print "#  Test the scanning of the whole of \@INC ...\n";
+ 
+@@ -45,9 +45,12 @@ $p =~ s/^/#  /mg;
+ print $p;
+ 
+ print "# OK, making sure strict and strict.pm were in there...\n";
+-ok( ($name2where->{'strict'} || 'huh???'), '/strict\.(pod|pm)$/');
++print "# (On Debian-based distributions Pod is stripped from\n",
++      "# strict.pm, so skip these tests.)\n";
++my $nopod = not exists ($name2where->{'strict'});
++skip($nopod, ($name2where->{'strict'} || 'huh???'), '/strict\.(pod|pm)$/');
+ 
+-ok grep( m/strict\.(pod|pm)/, keys %$where2name );
++skip($nopod, grep( m/strict\.(pod|pm)/, keys %$where2name ));
+ 
+ my  $strictpath = $name2where->{'strict'};
+ if( $strictpath ) {
+@@ -56,8 +59,30 @@ if( $strictpath ) {
+   for(@x) { s{[/\\]}{/}g; }
+   print "#        => \"$x[0]\" to \"$x[1]\"\n";
+   ok $x[0], $x[1], " find('strict') should match survey's name2where{strict}";
++} elsif ($nopod) {
++  skip "skipping find() for strict.pm"; # skipping find() for 'thatpath/strict.pm
+ } else {
+-  ok 0;  # no 'thatpath/strict.pm' means can't test find()
++  ok 0;  # an entry without a defined path means can't test find()
++}
++
++print "# Test again on a module we know is present, in case the
++strict.pm tests were skipped...\n";
++
++# Grab the first item in $name2where, since it doesn't matter which we
++# use.
++my $testmod = (keys %$name2where)[0];
++my  $testpath = $name2where->{$testmod};
++if( $testmod ) {
++  my @x = ($x->find($testmod)||'(nil)', $testpath);
++  print "# Comparing \"$x[0]\" to \"$x[1]\"\n";
++  for(@x) { s{[/\\]}{/}g; }
++  print "#        => \"$x[0]\" to \"$x[1]\"\n";
++  skip $^O eq 'VMS' ? '-- case may or may not be preserved' : 0,
++       $x[0], 
++       $x[1], 
++       " find('$testmod') should match survey's name2where{$testmod}";
++} else {
++  ok 0;  # no 'thatpath/<name>.pm' means can't test find()
+ }
+ 
+ ok 1;
+diff -up perl-5.10.1/lib/Pod/Simple/t/strpvbtm.t.bbb perl-5.10.1/lib/Pod/Simple/t/strpvbtm.t
+--- perl-5.10.1/lib/Pod/Simple/t/strpvbtm.t.bbb	2010-03-05 13:35:27.001594002 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/strpvbtm.t	2010-03-05 13:35:27.001594002 +0100
+@@ -0,0 +1,111 @@
++#!/usr/bin/perl -w
++
++# t/strip_verbatim_indent.t.t - check verabtim indent stripping feature
++
++BEGIN {
++    chdir 't' if -d 't';
++}
++
++use strict;
++use lib '../lib';
++use Test::More tests => 79;
++#use Test::More 'no_plan';
++
++use_ok('Pod::Simple::XHTML') or exit;
++use_ok('Pod::Simple::XMLOutStream') or exit;
++
++isa_ok my $parser = Pod::Simple::XHTML->new, 'Pod::Simple::XHTML';
++
++ok $parser->strip_verbatim_indent(' '), 'Should be able to set striper to " "';
++ok $parser->strip_verbatim_indent('    '), 'Should be able to set striper to "    "';
++ok $parser->strip_verbatim_indent("t"), 'Should be able to set striper to "\\t"';
++ok $parser->strip_verbatim_indent(sub { ' ' }), 'Should be able to set striper to coderef';
++
++for my $spec (
++    [
++        "\n=pod\n\n foo bar baz\n",
++        undef,
++        qq{<Document><Verbatim\nxml:space="preserve"> foo bar baz</Verbatim></Document>},
++        "<pre><code> foo bar baz</code></pre>\n\n",
++        'undefined indent'
++    ],
++    [
++        "\n=pod\n\n foo bar baz\n",
++        ' ',
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar baz</Verbatim></Document>},
++        "<pre><code>foo bar baz</code></pre>\n\n",
++        'single space indent'
++    ],
++    [
++        "\n=pod\n\n foo bar baz\n",
++        '  ',
++        qq{<Document><Verbatim\nxml:space="preserve"> foo bar baz</Verbatim></Document>},
++        "<pre><code> foo bar baz</code></pre>\n\n",
++        'too large indent'
++    ],
++    [
++        "\n=pod\n\n  foo bar baz\n",
++        '  ',
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar baz</Verbatim></Document>},
++        "<pre><code>foo bar baz</code></pre>\n\n",
++        'double space indent'
++    ],
++    [
++        "\n=pod\n\n  foo bar baz\n",
++        sub { '  ' },
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar baz</Verbatim></Document>},
++        "<pre><code>foo bar baz</code></pre>\n\n",
++        'code ref stripper'
++    ],
++    [
++        "\n=pod\n\n foo bar\n\n baz blez\n",
++        ' ',
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar\n\nbaz blez</Verbatim></Document>},
++        "<pre><code>foo bar\n\nbaz blez</code></pre>\n\n",
++        'single space indent and empty line'
++    ],
++    [
++        "\n=pod\n\n foo bar\n\n baz blez\n",
++        sub { ' ' },
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar\n\nbaz blez</Verbatim></Document>},
++        "<pre><code>foo bar\n\nbaz blez</code></pre>\n\n",
++        'code ref indent and empty line'
++    ],
++    [
++        "\n=pod\n\n foo bar\n\n baz blez\n",
++        sub { (my $s = shift->[0]) =~ s/\S.*//; $s },
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar\n\nbaz blez</Verbatim></Document>},
++        "<pre><code>foo bar\n\nbaz blez</code></pre>\n\n",
++        'heuristic code ref indent'
++    ],
++    [
++        "\n=pod\n\n foo bar\n   baz blez\n",
++        sub { s/^\s+// for @{ $_[0] } },
++        qq{<Document><Verbatim\nxml:space="preserve">foo bar\nbaz blez</Verbatim></Document>},
++        "<pre><code>foo bar\nbaz blez</code></pre>\n\n",
++        'militant code ref'
++    ],
++) {
++    my ($pod, $indent, $xml, $xhtml, $desc) = @$spec;
++    # Test XML output.
++    ok my $p = Pod::Simple::XMLOutStream->new, "Construct XML parser to test $desc";
++    $p->hide_line_numbers(1);
++    my $output = '';
++    $p->output_string( \$output );
++    is $indent, $p->strip_verbatim_indent($indent),
++        'Set stripper for XML to ' . (defined $indent ? qq{"$indent"} : 'undef');
++    ok $p->parse_string_document( $pod ), "Parse POD to XML for $desc";
++    is $output, $xml, "Should have expected XML output for $desc";
++
++
++    # Test XHTML output.
++    ok $p = Pod::Simple::XHTML->new, "Construct XHMTL parser to test $desc";
++    $p->html_header('');
++    $p->html_footer('');
++    $output = '';
++    $p->output_string( \$output );
++    is $indent, $p->strip_verbatim_indent($indent),
++        'Set stripper for XHTML to ' . (defined $indent ? qq{"$indent"} : 'undef');
++    ok $p->parse_string_document( $pod ), "Parse POD to XHTML for $desc";
++    is $output, $xhtml, "Should have expected XHTML output for $desc";
++}
+diff -up perl-5.10.1/lib/Pod/Simple/t/tiedfh.t.bbb perl-5.10.1/lib/Pod/Simple/t/tiedfh.t
+--- perl-5.10.1/lib/Pod/Simple/t/tiedfh.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/tiedfh.t	2010-03-05 13:35:27.001594002 +0100
+@@ -1,3 +1,4 @@
++# Testing tied output filehandle
+ BEGIN {
+     if($ENV{PERL_CORE}) {
+         chdir 't';
+diff -up perl-5.10.1/lib/Pod/Simple/t/verbatim.t.bbb perl-5.10.1/lib/Pod/Simple/t/verbatim.t
+--- perl-5.10.1/lib/Pod/Simple/t/verbatim.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/verbatim.t	2010-03-05 13:35:27.002594002 +0100
+@@ -1,4 +1,4 @@
+-
++# Testing verbatim sections
+ use strict;
+ use Test;
+ BEGIN { plan tests => 31 };
+diff -up perl-5.10.1/lib/Pod/Simple/t/verb_fmt.t.bbb perl-5.10.1/lib/Pod/Simple/t/verb_fmt.t
+--- perl-5.10.1/lib/Pod/Simple/t/verb_fmt.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/verb_fmt.t	2010-03-05 13:35:27.002594002 +0100
+@@ -1,4 +1,4 @@
+-
++# Testing verbatim formatted sections
+ use strict;
+ use Test;
+ BEGIN { plan tests => 62 };
+diff -up perl-5.10.1/lib/Pod/Simple/t/xhtml01.t.bbb perl-5.10.1/lib/Pod/Simple/t/xhtml01.t
+--- perl-5.10.1/lib/Pod/Simple/t/xhtml01.t.bbb	2009-02-12 23:58:16.000000000 +0100
++++ perl-5.10.1/lib/Pod/Simple/t/xhtml01.t	2010-03-05 13:35:27.002594002 +0100
+@@ -8,7 +8,8 @@ BEGIN {
+ 
+ use strict;
+ use lib '../lib';
+-use Test::More tests => 26;
++use Test::More tests => 48;
++#use Test::More 'no_plan';
+ 
+ use_ok('Pod::Simple::XHTML') or exit;
+ 
+@@ -17,24 +18,42 @@ isa_ok ($parser, 'Pod::Simple::XHTML');
+ 
+ my $results;
+ 
+-my $PERLDOC = "http://search.cpan.org/perldoc?";
++my $PERLDOC = "http://search.cpan.org/perldoc";
++my $MANURL = "http://man.he.net/man";
+ 
+ initialize($parser, $results);
+ $parser->parse_string_document( "=head1 Poit!" );
+-is($results, "<h1>Poit!</h1>\n\n", "head1 level output");
++is($results, qq{<h1 id="Poit-">Poit!</h1>\n\n}, "head1 level output");
++
++initialize($parser, $results);
++$parser->html_h_level(2);
++$parser->parse_string_document( "=head1 Poit!" );
++is($results, qq{<h2 id="Poit-">Poit!</h2>\n\n}, "head1 level output h_level 2");
+ 
+ initialize($parser, $results);
+ $parser->parse_string_document( "=head2 I think so Brain." );
+-is($results, "<h2>I think so Brain.</h2>\n\n", "head2 level output");
++is($results, qq{<h2 id="I-think-so-Brain.">I think so Brain.</h2>\n\n}, "head2 level output");
+ 
+ initialize($parser, $results);
+ $parser->parse_string_document( "=head3 I say, Brain..." );
+-is($results, "<h3>I say, Brain...</h3>\n\n", "head3 level output");
++is($results, qq{<h3 id="I-say-Brain...">I say, Brain...</h3>\n\n}, "head3 level output");
+ 
+ initialize($parser, $results);
+-$parser->parse_string_document( "=head4 Zort!" );
+-is($results, "<h4>Zort!</h4>\n\n", "head4 level output");
++$parser->parse_string_document( "=head4 Zort & Zog!" );
++is($results, qq{<h4 id="Zort-Zog-">Zort &amp; Zog!</h4>\n\n}, "head4 level output");
+ 
++sub x ($;&) {
++  my $code = $_[1];
++  Pod::Simple::XHTML->_out(
++  sub { $code->($_[0]) if $code },
++  "=pod\n\n$_[0]",
++) }
++
++like(
++  x("=head1 Header\n\n=for html <div>RAW<span>!</span></div>\n\nDone."),
++  qr/.+<\/h1>\s+<div>RAW<span>!<\/span><\/div>\s+.*/sm,
++  "heading building"
++) or exit;
+ 
+ initialize($parser, $results);
+ $parser->parse_string_document(<<'EOPOD');
+@@ -63,7 +82,7 @@ EOPOD
+ is($results, <<'EOHTML', "multiple paragraphs");
+ <p>B: Now, Pinky, if by any chance you are captured during this mission, remember you are Gunther Heindriksen from Appenzell. You moved to Grindelwald to drive the cog train to Murren. Can you repeat that?</p>
+ 
+-<p>P: Mmmm, no, Brain, don't think I can.</p>
++<p>P: Mmmm, no, Brain, don&#39;t think I can.</p>
+ 
+ EOHTML
+ 
+@@ -86,10 +105,12 @@ EOPOD
+ is($results, <<'EOHTML', "simple bulleted list");
+ <ul>
+ 
+-<li>P: Gee, Brain, what do you want to do tonight?</li>
++<li><p>P: Gee, Brain, what do you want to do tonight?</p>
+ 
+-<li>B: The same thing we do every night, Pinky. Try to take over the world!</li>
++</li>
++<li><p>B: The same thing we do every night, Pinky. Try to take over the world!</p>
+ 
++</li>
+ </ul>
+ 
+ EOHTML
+@@ -114,10 +135,12 @@ EOPOD
+ is($results, <<'EOHTML', "numbered list");
+ <ol>
+ 
+-<li>1. P: Gee, Brain, what do you want to do tonight?</li>
++<li><p>P: Gee, Brain, what do you want to do tonight?</p>
+ 
+-<li>2. B: The same thing we do every night, Pinky. Try to take over the world!</li>
++</li>
++<li><p>B: The same thing we do every night, Pinky. Try to take over the world!</p>
+ 
++</li>
+ </ol>
+ 
+ EOHTML
+@@ -140,20 +163,185 @@ The same thing we do every night, Pinky.
+ EOPOD
+ 
+ is($results, <<'EOHTML', "list with text headings");
++<dl>
++
++<dt>Pinky</dt>
++<dd>
++
++<p>Gee, Brain, what do you want to do tonight?</p>
++
++</dd>
++<dt>Brain</dt>
++<dd>
++
++<p>The same thing we do every night, Pinky. Try to take over the world!</p>
++
++</dd>
++</dl>
++
++EOHTML
++
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=over
++
++=item * Pinky
++
++Gee, Brain, what do you want to do tonight?
++
++=item * Brain
++
++The same thing we do every night, Pinky. Try to take over the world!
++
++=back
++
++EOPOD
++
++is($results, <<'EOHTML', "list with bullet and text headings");
+ <ul>
+ 
+-<li>Pinky
++<li><p>Pinky</p>
+ 
+ <p>Gee, Brain, what do you want to do tonight?</p>
+ 
+-<li>Brain
++</li>
++<li><p>Brain</p>
+ 
+ <p>The same thing we do every night, Pinky. Try to take over the world!</p>
+ 
++</li>
+ </ul>
+ 
+ EOHTML
+ 
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=over
++
++=item * Brain <brain@binkyandthebrain.com>
++
++=item * Pinky <pinky@binkyandthebrain.com>
++
++=back
++
++EOPOD
++
++is($results, <<'EOHTML', "bulleted author list");
++<ul>
++
++<li><p>Brain &lt;brain@binkyandthebrain.com&gt;</p>
++
++</li>
++<li><p>Pinky &lt;pinky@binkyandthebrain.com&gt;</p>
++
++</li>
++</ul>
++
++EOHTML
++
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=over
++
++=item Pinky
++
++=over
++
++=item World Domination
++
++=back
++
++=item Brain
++
++=back
++
++EOPOD
++
++is($results, <<'EOHTML', 'nested lists');
++<dl>
++
++<dt>Pinky</dt>
++<dd>
++
++<dl>
++
++<dt>World Domination</dt>
++<dd>
++
++</dd>
++</dl>
++
++</dd>
++<dt>Brain</dt>
++<dd>
++
++</dd>
++</dl>
++
++EOHTML
++
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=over
++
++=item Pinky
++
++On the list:
++
++=over
++
++=item World Domination
++
++Fight the good fight
++
++=item Go to Europe
++
++(Steve Martin joke)
++
++=back
++
++=item Brain
++
++Not so much
++
++=back
++
++EOPOD
++
++is($results, <<'EOHTML', 'multiparagraph nested lists');
++<dl>
++
++<dt>Pinky</dt>
++<dd>
++
++<p>On the list:</p>
++
++<dl>
++
++<dt>World Domination</dt>
++<dd>
++
++<p>Fight the good fight</p>
++
++</dd>
++<dt>Go to Europe</dt>
++<dd>
++
++<p>(Steve Martin joke)</p>
++
++</dd>
++</dl>
++
++</dd>
++<dt>Brain</dt>
++<dd>
++
++<p>Not so much</p>
++
++</dd>
++</dl>
++
++EOHTML
+ 
+ initialize($parser, $results);
+ $parser->parse_string_document(<<'EOPOD');
+@@ -234,7 +422,7 @@ $parser->parse_string_document(<<'EOPOD'
+ A plain paragraph with a L<Newlines>.
+ EOPOD
+ is($results, <<"EOHTML", "Link entity in a paragraph");
+-<p>A plain paragraph with a <a href="${PERLDOC}Newlines">Newlines</a>.</p>
++<p>A plain paragraph with a <a href="$PERLDOC?Newlines">Newlines</a>.</p>
+ 
+ EOHTML
+ 
+@@ -245,7 +433,7 @@ $parser->parse_string_document(<<'EOPOD'
+ A plain paragraph with a L<perlport/Newlines>.
+ EOPOD
+ is($results, <<"EOHTML", "Link entity in a paragraph");
+-<p>A plain paragraph with a <a href="${PERLDOC}perlport/Newlines">"Newlines" in perlport</a>.</p>
++<p>A plain paragraph with a <a href="$PERLDOC?perlport#Newlines">&quot;Newlines&quot; in perlport</a>.</p>
+ 
+ EOHTML
+ 
+@@ -304,20 +492,44 @@ is($results, <<"EOHTML", "File name in a
+ 
+ EOHTML
+ 
+-
++# It's not important that 's (apostrophes) be encoded for XHTML output.
+ initialize($parser, $results);
+ $parser->parse_string_document(<<'EOPOD');
+ =pod
+ 
+-  # this header is very important & don't you forget it
++  # this header is very important & dont you forget it
+   my $text = "File is: " . <FILE>;
+ EOPOD
+ is($results, <<"EOHTML", "Verbatim text with encodable entities");
+-<pre><code>  # this header is very important &amp; don&#39;t you forget it
++<pre><code>  # this header is very important &amp; dont you forget it
+   my \$text = &quot;File is: &quot; . &lt;FILE&gt;;</code></pre>
+ 
+ EOHTML
+ 
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=pod
++
++A text paragraph using E<sol> and E<verbar> special POD entities.
++
++EOPOD
++is($results, <<"EOHTML", "Text with decodable entities");
++<p>A text paragraph using / and | special POD entities.</p>
++
++EOHTML
++
++initialize($parser, $results);
++$parser->parse_string_document(<<'EOPOD');
++=pod
++
++A text paragraph using numeric POD entities: E<60>, E<62>.
++
++EOPOD
++is($results, <<"EOHTML", "Text with numeric entities");
++<p>A text paragraph using numeric POD entities: &lt;, &gt;.</p>
++
++EOHTML
++
+ SKIP: for my $use_html_entities (0, 1) {
+   if ($use_html_entities and not $Pod::Simple::XHTML::HAS_HTML_ENTITIES) {
+     skip("HTML::Entities not installed", 1);
+@@ -327,18 +539,54 @@ SKIP: for my $use_html_entities (0, 1) {
+   $parser->parse_string_document(<<'EOPOD');
+ =pod
+ 
+-  # this header is very important & don't you forget it
++  # this header is very important & dont you forget it
+   B<my $file = <FILEE<gt> || 'Blank!';>
+   my $text = "File is: " . <FILE>;
+ EOPOD
+ is($results, <<"EOHTML", "Verbatim text with markup and embedded formatting");
+-<pre><code>  # this header is very important &amp; don&#39;t you forget it
++<pre><code>  # this header is very important &amp; dont you forget it
+   <b>my \$file = &lt;FILE&gt; || &#39;Blank!&#39;;</b>
+   my \$text = &quot;File is: &quot; . &lt;FILE&gt;;</code></pre>
+ 
+ EOHTML
+ }
+ 
++
++ok $parser = Pod::Simple::XHTML->new, 'Construct a new parser';
++$results = '';
++$parser->output_string( \$results ); # Send the resulting output to a string
++ok $parser->parse_string_document( "=head1 Poit!" ), 'Parse with headers';
++like $results, qr{<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1" />},
++    'Should have proper http-equiv meta tag';
++
++# Test the link generation methods.
++is $parser->resolve_pod_page_link('Net::Ping', 'INSTALL'),
++    "$PERLDOC?Net::Ping#INSTALL",
++    'POD link with fragment';
++is $parser->resolve_pod_page_link('perlpodspec'),
++    "$PERLDOC?perlpodspec", 'Simple POD link';
++is $parser->resolve_pod_page_link(undef, 'SYNOPSIS'), '#SYNOPSIS',
++    'Simple fragment link';
++is $parser->resolve_pod_page_link(undef, 'this that'), '#this-that',
++    'Fragment link with space';
++is $parser->resolve_pod_page_link('perlpod', 'this that'),
++    "$PERLDOC?perlpod#this-that",
++    'POD link with fragment with space';
++
++is $parser->resolve_man_page_link('crontab(5)', 'EXAMPLE CRON FILE'),
++    "${MANURL}5/crontab", 'Man link with fragment';
++is $parser->resolve_man_page_link('crontab(5)'),
++    "${MANURL}5/crontab", 'Man link without fragment';
++is $parser->resolve_man_page_link('crontab'),
++    "${MANURL}1/crontab", 'Man link without section';
++
++# Make sure that batch_mode_page_object_init() works.
++ok $parser->batch_mode_page_object_init(0, 0, 0, 0, 6),
++    'Call batch_mode_page_object_init()';
++ok $parser->batch_mode, 'We should be in batch mode';
++is $parser->batch_mode_current_level, 6,
++    'The level should have been set';
++
+ ######################################
+ 
+ sub initialize {
+diff -up perl-5.10.1/MANIFEST.bbb perl-5.10.1/MANIFEST
+--- perl-5.10.1/MANIFEST.bbb	2010-03-05 13:36:59.560601348 +0100
++++ perl-5.10.1/MANIFEST	2010-03-05 13:37:14.114593963 +0100
+@@ -2951,7 +2951,6 @@ lib/Pod/Simple/t/fcodes_s.t	Pod::Simple 
+ lib/Pod/Simple/t/fcodes.t	Pod::Simple test file
+ lib/Pod/Simple/t/fornot.t	Pod::Simple test file
+ lib/Pod/Simple/t/for.t		Pod::Simple test file
+-lib/Pod/Simple/t/fullstop.t	Pod::Simple test file
+ lib/Pod/Simple/t/heads.t	Pod::Simple test file
+ lib/Pod/Simple/t/html01.t	Pod::Simple test file
+ lib/Pod/Simple/t/html02.t	Pod::Simple test file

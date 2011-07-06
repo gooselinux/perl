@@ -1,0 +1,1250 @@
+diff -up perl-5.10.1/lib/ExtUtils/ParseXS.pm.eee perl-5.10.1/lib/ExtUtils/ParseXS.pm
+--- perl-5.10.1/lib/ExtUtils/ParseXS.pm.eee	2009-07-22 14:56:33.000000000 +0200
++++ perl-5.10.1/lib/ExtUtils/ParseXS.pm	2010-02-11 20:03:54.000000000 +0100
+@@ -18,7 +18,8 @@ my(@XSStack);	# Stack of conditionals an
+ my($XSS_work_idx, $cpp_next_tmp);
+ 
+ use vars qw($VERSION);
+-$VERSION = '2.2002';
++$VERSION = '2.2203';
++$VERSION = eval $VERSION if $VERSION =~ /_/;
+ 
+ use vars qw(%input_expr %output_expr $ProtoUsed @InitFileCode $FH $proto_re $Overload $errors $Fallback
+ 	    $cplusplus $hiertype $WantPrototypes $WantVersionChk $except $WantLineNumbers
+@@ -210,7 +211,9 @@ sub process_file {
+   $size = qr[,\s* (??{ $bal }) ]x; # Third arg (to setpvn)
+ 
+   foreach my $key (keys %output_expr) {
+-    BEGIN { $^H |= 0x00200000 }; # Equivalent to: use re 'eval', but hardcoded so we can compile re.xs
++    # We can still bootstrap compile 're', because in code re.pm is 
++    # available to miniperl, and does not attempt to load the XS code.
++    use re 'eval';
+ 
+     my ($t, $with_size, $arg, $sarg) =
+       ($output_expr{$key} =~
+@@ -227,9 +230,10 @@ sub process_file {
+ 
+   # Match an XS keyword
+   $BLOCK_re= '\s*(' . join('|', qw(
+-				   REQUIRE BOOT CASE PREINIT INPUT INIT CODE PPCODE OUTPUT
+-				   CLEANUP ALIAS ATTRS PROTOTYPES PROTOTYPE VERSIONCHECK INCLUDE
+-				   SCOPE INTERFACE INTERFACE_MACRO C_ARGS POSTCALL OVERLOAD FALLBACK
++				   REQUIRE BOOT CASE PREINIT INPUT INIT CODE PPCODE
++				   OUTPUT CLEANUP ALIAS ATTRS PROTOTYPES PROTOTYPE
++				   VERSIONCHECK INCLUDE INCLUDE_COMMAND SCOPE INTERFACE
++				   INTERFACE_MACRO C_ARGS POSTCALL OVERLOAD FALLBACK
+ 				  )) . "|$END)\\s*:";
+ 
+   
+@@ -353,6 +357,15 @@ S_croak_xs_usage(pTHX_ const CV *const c
+ 
+ #endif
+ 
++/* NOTE: the prototype of newXSproto() is different in versions of perls,
++ * so we define a portable version of newXSproto()
++ */
++#ifdef newXS_flags
++#define newXSproto_portable(name, c_impl, file, proto) newXS_flags(name, c_impl, file, proto, 0)
++#else
++#define newXSproto_portable(name, c_impl, file, proto) (PL_Sv=(SV*)newXS(name, c_impl, file), sv_setpv(PL_Sv, proto), (CV*)PL_Sv)
++#endif /* !defined(newXS_flags) */
++
+ EOF
+ 
+   print 'ExtUtils::ParseXS::CountLines'->end_marker, "\n" if $WantLineNumbers;
+@@ -436,7 +449,7 @@ EOF
+     $xsreturn = 0;
+ 
+     $_ = shift(@line);
+-    while (my $kwd = check_keyword("REQUIRE|PROTOTYPES|FALLBACK|VERSIONCHECK|INCLUDE")) {
++    while (my $kwd = check_keyword("REQUIRE|PROTOTYPES|FALLBACK|VERSIONCHECK|INCLUDE(?:_COMMAND)?|SCOPE")) {
+       &{"${kwd}_handler"}() ;
+       next PARAGRAPH unless @line ;
+       $_ = shift(@line);
+@@ -508,11 +521,11 @@ EOF
+ 	  next unless defined($pre) && length($pre);
+ 	  my $out_type = '';
+ 	  my $inout_var;
+-	  if ($process_inout and s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\s+//) {
++	  if ($process_inout and s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\b\s*//) {
+ 	    my $type = $1;
+ 	    $out_type = $type if $type ne 'IN';
+-	    $arg =~ s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\s+//;
+-	    $pre =~ s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\s+//;
++	    $arg =~ s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\b\s*//;
++	    $pre =~ s/^(IN|IN_OUTLIST|OUTLIST|OUT|IN_OUT)\b\s*//;
+ 	  }
+ 	  my $islength;
+ 	  if ($name =~ /^length\( \s* (\w+) \s* \)\z/x) {
+@@ -542,7 +555,7 @@ EOF
+     } else {
+       @args = split(/\s*,\s*/, $orig_args);
+       for (@args) {
+-	if ($process_inout and s/^(IN|IN_OUTLIST|OUTLIST|IN_OUT|OUT)\s+//) {
++	if ($process_inout and s/^(IN|IN_OUTLIST|OUTLIST|IN_OUT|OUT)\b\s*//) {
+ 	  my $out_type = $1;
+ 	  next if $out_type eq 'IN';
+ 	  $only_C_inlist{$_} = 1 if $out_type eq "OUTLIST";
+@@ -555,7 +568,6 @@ EOF
+       my $arg0 = ((defined($static) or $func_name eq 'new')
+ 		  ? "CLASS" : "THIS");
+       unshift(@args, $arg0);
+-      ($report_args = "$arg0, $report_args") =~ s/^\w+, $/$arg0/;
+     }
+     my $extra_args = 0;
+     @args_num = ();
+@@ -847,7 +859,7 @@ EOF
+ 	next;
+       }
+       last if $_ eq "$END:";
+-      death(/^$BLOCK_re/o ? "Misplaced `$1:'" : "Junk at end of function");
++      death(/^$BLOCK_re/o ? "Misplaced `$1:'" : "Junk at end of function ($_)");
+     }
+     
+     print Q(<<"EOF") if $except;
+@@ -870,12 +882,12 @@ EOF
+ #
+ EOF
+ 
+-    my $newXS = "newXS" ;
+-    my $proto = "" ;
++    our $newXS = "newXS" ;
++    our $proto = "" ;
+     
+     # Build the prototype string for the xsub
+     if ($ProtoThisXSUB) {
+-      $newXS = "newXSproto";
++      $newXS = "newXSproto_portable";
+       
+       if ($ProtoThisXSUB eq 2) {
+ 	# User has specified empty prototype
+@@ -897,23 +909,20 @@ EOF
+       }
+       $proto = qq{, "$proto"};
+     }
+-    
++
+     if (%XsubAliases) {
+       $XsubAliases{$pname} = 0
+ 	unless defined $XsubAliases{$pname} ;
+       while ( ($name, $value) = each %XsubAliases) {
+ 	push(@InitFileCode, Q(<<"EOF"));
+-#        cv = newXS(\"$name\", XS_$Full_func_name, file);
++#        cv = ${newXS}(\"$name\", XS_$Full_func_name, file$proto);
+ #        XSANY.any_i32 = $value ;
+ EOF
+-	push(@InitFileCode, Q(<<"EOF")) if $proto;
+-#        sv_setpv((SV*)cv$proto) ;
+-EOF
+       }
+     }
+     elsif (@Attributes) {
+       push(@InitFileCode, Q(<<"EOF"));
+-#        cv = newXS(\"$pname\", XS_$Full_func_name, file);
++#        cv = ${newXS}(\"$pname\", XS_$Full_func_name, file$proto);
+ #        apply_attrs_string("$Package", cv, "@Attributes", 0);
+ EOF
+     }
+@@ -921,18 +930,19 @@ EOF
+       while ( ($name, $value) = each %Interfaces) {
+ 	$name = "$Package\::$name" unless $name =~ /::/;
+ 	push(@InitFileCode, Q(<<"EOF"));
+-#        cv = newXS(\"$name\", XS_$Full_func_name, file);
++#        cv = ${newXS}(\"$name\", XS_$Full_func_name, file$proto);
+ #        $interface_macro_set(cv,$value) ;
+ EOF
+-	push(@InitFileCode, Q(<<"EOF")) if $proto;
+-#        sv_setpv((SV*)cv$proto) ;
+-EOF
+       }
+     }
+-    else {
++    elsif($newXS eq 'newXS'){ # work around P5NCI's empty newXS macro
+       push(@InitFileCode,
+ 	   "        ${newXS}(\"$pname\", XS_$Full_func_name, file$proto);\n");
+     }
++    else {
++      push(@InitFileCode,
++	   "        (void)${newXS}(\"$pname\", XS_$Full_func_name, file$proto);\n");
++    }
+   }
+ 
+   if ($Overload) # make it findable with fetchmethod
+@@ -950,7 +960,7 @@ EOF
+     /* Making a sub named "${Package}::()" allows the package */
+     /* to be findable via fetchmethod(), and causes */
+     /* overload::Overloaded("${Package}") to return true. */
+-    newXS("${Package}::()", XS_${Packid}_nil, file$proto);
++    (void)${newXS}("${Package}::()", XS_${Packid}_nil, file$proto);
+ MAKE_FETCHMETHOD_WORK
+   }
+ 
+@@ -976,10 +986,17 @@ EOF
+ ##endif
+ EOF
+ 
++  #Under 5.8.x and lower, newXS is declared in proto.h as expecting a non-const
++  #file name argument. If the wrong qualifier is used, it causes breakage with
++  #C++ compilers and warnings with recent gcc.
+   #-Wall: if there is no $Full_func_name there are no xsubs in this .xs
+   #so `file' is unused
+   print Q(<<"EOF") if $Full_func_name;
++##if (PERL_REVISION == 5 && PERL_VERSION < 9)
++#    char* file = __FILE__;
++##else
+ #    const char* file = __FILE__;
++##endif
+ EOF
+ 
+   print Q("#\n");
+@@ -1026,12 +1043,12 @@ EOF
+     print "\n    /* End of Initialisation Section */\n\n" ;
+   }
+ 
+-  if ($] >= 5.009) {
+-    print <<'EOF';
+-    if (PL_unitcheckav)
+-         call_list(PL_scopestack_ix, PL_unitcheckav);
++  print Q(<<'EOF');
++##if (PERL_REVISION == 5 && PERL_VERSION >= 9)
++#  if (PL_unitcheckav)
++#       call_list(PL_scopestack_ix, PL_unitcheckav);
++##endif
+ EOF
+-  }
+ 
+   print Q(<<"EOF");
+ #    XSRETURN_YES;
+@@ -1160,7 +1177,7 @@ sub INPUT_handler {
+       print "\tSTRLEN\tSTRLEN_length_of_$2;\n";
+       $lengthof{$2} = $name;
+       # $islengthof{$name} = $1;
+-      $deferred .= "\n\tXSauto_length_of_$2 = STRLEN_length_of_$2;";
++      $deferred .= "\n\tXSauto_length_of_$2 = STRLEN_length_of_$2;\n";
+     }
+ 
+     # check for optional initialisation code
+@@ -1352,7 +1369,7 @@ sub OVERLOAD_handler()
+       $Overload = 1 unless $Overload;
+       my $overload = "$Package\::(".$1 ;
+       push(@InitFileCode,
+-	   "        newXS(\"$overload\", XS_$Full_func_name, file$proto);\n");
++	   "        (void)${newXS}(\"$overload\", XS_$Full_func_name, file$proto);\n");
+     }
+   }  
+ }
+@@ -1446,16 +1463,10 @@ sub SCOPE_handler ()
+     death("Error: Only 1 SCOPE declaration allowed per xsub")
+       if $scope_in_this_xsub ++ ;
+ 
+-    for (;  !/^$BLOCK_re/o;  $_ = shift(@line)) {
+-      next unless /\S/;
+-      TrimWhitespace($_) ;
+-      if ($_ =~ /^DISABLE/i) {
+-	$ScopeThisXSUB = 0
+-      } elsif ($_ =~ /^ENABLE/i) {
+-	$ScopeThisXSUB = 1
+-      }
+-    }
+-
++    TrimWhitespace($_);
++    death ("Error: SCOPE: ENABLE/DISABLE")
++        unless /^(ENABLE|DISABLE)\b/i;
++    $ScopeThisXSUB = ( uc($1) eq 'ENABLE' );
+   }
+ 
+ sub PROTOTYPES_handler ()
+@@ -1475,6 +1486,22 @@ sub PROTOTYPES_handler ()
+ 
+   }
+ 
++sub PushXSStack
++  {
++    # Save the current file context.
++    push(@XSStack, {
++		    type            => 'file',
++		    LastLine        => $lastline,
++		    LastLineNo      => $lastline_no,
++		    Line            => \@line,
++		    LineNo          => \@line_no,
++		    Filename        => $filename,
++		    Filepathname    => $filepathname,
++		    Handle          => $FH,
++		   }) ;
++
++  }
++
+ sub INCLUDE_handler ()
+   {
+     # the rest of the current line should contain a valid filename
+@@ -1493,17 +1520,11 @@ sub INCLUDE_handler ()
+ 
+     ++ $IncludedFiles{$_} unless /\|\s*$/ ;
+ 
+-    # Save the current file context.
+-    push(@XSStack, {
+-		    type		=> 'file',
+-		    LastLine        => $lastline,
+-		    LastLineNo      => $lastline_no,
+-		    Line            => \@line,
+-		    LineNo          => \@line_no,
+-		    Filename        => $filename,
+-		    Filepathname    => $filepathname,
+-		    Handle          => $FH,
+-		   }) ;
++    Warn("The INCLUDE directive with a command is deprecated." .
++         " Use INCLUDE_COMMAND instead!")
++      if /\|\s*$/ ;
++
++    PushXSStack();
+ 
+     $FH = Symbol::gensym();
+ 
+@@ -1516,7 +1537,8 @@ sub INCLUDE_handler ()
+ #
+ EOF
+ 
+-    $filepathname = $filename = $_ ;
++    $filename = $_ ;
++    $filepathname = "$dir/$filename";
+ 
+     # Prime the pump by reading the first
+     # non-blank line
+@@ -1528,7 +1550,51 @@ EOF
+ 
+     $lastline = $_ ;
+     $lastline_no = $. ;
++  }
++
++sub INCLUDE_COMMAND_handler ()
++  {
++    # the rest of the current line should contain a valid command
++
++    TrimWhitespace($_) ;
++
++    death("INCLUDE_COMMAND: command missing")
++      unless $_ ;
++
++    death("INCLUDE_COMMAND: pipes are illegal")
++      if /^\s*\|/ or /\|\s*$/ ;
++
++    PushXSStack();
++
++    $FH = Symbol::gensym();
++
++    # If $^X is used in INCLUDE_COMMAND, we know it's supposed to be
++    # the same perl interpreter as we're currently running
++    s/^\s*\$\^X/$^X/;
++
++    # open the new file
++    open ($FH, "-|", "$_")
++      or death("Cannot run command '$_' to include its output: $!") ;
++
++    print Q(<<"EOF");
++#
++#/* INCLUDE_COMMAND:  Including output of '$_' from '$filename' */
++#
++EOF
++
++    $filename = $_ ;
++    $filepathname = "$dir/$filename";
++
++    # Prime the pump by reading the first
++    # non-blank line
++
++    # skip leading blank lines
++    while (<$FH>) {
++      last unless /^\s*$/ ;
++    }
+ 
++    $lastline = $_ ;
++    $lastline_no = $. ;
+   }
+ 
+ sub PopFile()
+@@ -2072,11 +2138,24 @@ encountered during processing of the XS 
+ 
+ Based on xsubpp code, written by Larry Wall.
+ 
+-Maintained by Ken Williams, <ken@mathforum.org>
++Maintained by: 
++
++=over 4
++
++=item *
++
++Ken Williams, <ken@mathforum.org>
++
++=item *
++
++David Golden, <dagolden@cpan.org>
++
++=back
+ 
+ =head1 COPYRIGHT
+ 
+-Copyright 2002-2003 Ken Williams.  All rights reserved.
++Copyright 2002-2009 by Ken Williams, David Golden and other contributors.  All
++rights reserved.
+ 
+ This library is free software; you can redistribute it and/or
+ modify it under the same terms as Perl itself.
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/bugs/RT48104.xs perl-5.10.1/lib/ExtUtils/ParseXS/t/bugs/RT48104.xs
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/bugs/RT48104.xs	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/bugs/RT48104.xs	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,115 @@
++//  ***** BEGIN LICENSE BLOCK *****
++//  Version: MPL 1.1/GPL 2.0/LGPL 2.1
++// 
++//  The contents of this file are subject to the Mozilla Public License Version
++//  1.1 (the "License"); you may not use this file except in compliance with
++//  the License. You may obtain a copy of the License at
++//  http://www.mozilla.org/MPL/
++// 
++//  Software distributed under the License is distributed on an "AS IS" basis,
++//  WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++//  for the specific language governing rights and limitations under the
++//  License.
++// 
++//  The Original Code is Encode::Detect wrapper
++// 
++//  The Initial Developer of the Original Code is
++//  Proofpoint, Inc.
++//  Portions created by the Initial Developer are Copyright (C) 2005
++//  the Initial Developer. All Rights Reserved.
++// 
++//  Contributor(s):
++// 
++//  Alternatively, the contents of this file may be used under the terms of
++//  either the GNU General Public License Version 2 or later (the "GPL"), or
++//  the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++//  in which case the provisions of the GPL or the LGPL are applicable instead
++//  of those above. If you wish to allow use of your version of this file only
++//  under the terms of either the GPL or the LGPL, and not to allow others to
++//  use your version of this file under the terms of the MPL, indicate your
++//  decision by deleting the provisions above and replace them with the notice
++//  and other provisions required by the GPL or the LGPL. If you do not delete
++//  the provisions above, a recipient may use your version of this file under
++//  the terms of any one of the MPL, the GPL or the LGPL.
++// 
++//  ***** END LICENSE BLOCK *****
++
++extern "C" {
++#define PERL_NO_GET_CONTEXT     /* we want efficiency */
++#include "EXTERN.h"
++#include "perl.h"
++
++// work around perlbug #39634
++#if __GNUC__ == 3 && __GNUC_MINOR__ <= 3
++#undef HASATTRIBUTE_UNUSED
++#endif
++
++#include "XSUB.h"
++}
++
++#include "nscore.h"
++#include "nsUniversalDetector.h"
++
++class Detector: public nsUniversalDetector {
++    public:
++	Detector() {};
++	virtual ~Detector() {}
++	const char *getresult() { return mDetectedCharset; }
++	virtual void Reset() { this->nsUniversalDetector::Reset(); }
++    protected:
++	virtual void Report(const char* aCharset) { mDetectedCharset = aCharset; }
++};
++
++
++MODULE = Encode::Detect::Detector		PACKAGE = Encode::Detect::Detector
++PROTOTYPES: ENABLE
++
++
++Detector *
++Detector::new()
++
++void
++Detector::DESTROY()
++
++int
++Detector::handle(SV *buf)
++    CODE:
++	STRLEN len;
++	char *ptr = SvPV(buf, len);
++	RETVAL = THIS->HandleData(ptr, len);
++    OUTPUT:
++	RETVAL
++
++void
++Detector::eof()
++    CODE:
++	THIS->DataEnd();
++
++void
++Detector::reset()
++    CODE:
++	THIS->Reset();
++
++const char *
++Detector::getresult()
++    CODE:
++	RETVAL = THIS->getresult();
++    OUTPUT:
++	RETVAL
++
++
++const char *
++detect(buf)
++	SV *buf
++    CODE:
++	STRLEN len;
++	char *ptr = SvPV(buf, len);
++
++	Detector *det = new Detector;
++	det->HandleData(ptr, len);
++	det->DataEnd();
++	RETVAL = det->getresult();
++	delete det;
++    OUTPUT:
++        RETVAL
++
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/bugs/typemap perl-5.10.1/lib/ExtUtils/ParseXS/t/bugs/typemap
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/bugs/typemap	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/bugs/typemap	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,18 @@
++TYPEMAP
++Detector *	O_OBJECT
++
++INPUT
++O_OBJECT
++	if (sv_isobject($arg) && (SvTYPE(SvRV($arg)) == SVt_PVMG)) {
++	    $var = ($type)SvIV((SV*)SvRV( $arg ));
++	} else {
++	    warn(\"${Package}::$func_name() -- $var is not a blessed SV reference\");
++	    XSRETURN_UNDEF;
++	}
++
++OUTPUT
++# The Perl object is blessed into 'CLASS', which should be a
++# char * having the name of the package for the blessing.
++O_OBJECT
++	sv_setref_pv($arg, CLASS, (void*)$var);
++
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/include/nscore.h perl-5.10.1/lib/ExtUtils/ParseXS/t/include/nscore.h
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/include/nscore.h	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/include/nscore.h	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,20 @@
++#ifndef INCLUDED_NSCORE_H
++#define INCLUDED_NSCORE_H
++
++typedef short PRInt16;
++typedef unsigned short PRUint16;
++
++typedef int PRInt32;
++typedef unsigned PRUint32;
++
++typedef int PRBool;
++#define PR_TRUE 1
++#define PR_FALSE 0
++
++#define nsnull 0
++
++typedef PRUint32 nsresult;
++#define NS_OK 0
++#define NS_ERROR_OUT_OF_MEMORY ((nsresult)(0x8007000eL))
++
++#endif /* INCLUDED_NSCORE_H */
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/include/nsUniversalDetector.h perl-5.10.1/lib/ExtUtils/ParseXS/t/include/nsUniversalDetector.h
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/include/nsUniversalDetector.h	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/include/nsUniversalDetector.h	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,75 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* ***** BEGIN LICENSE BLOCK *****
++ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
++ *
++ * The contents of this file are subject to the Mozilla Public License Version
++ * 1.1 (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ * http://www.mozilla.org/MPL/
++ *
++ * Software distributed under the License is distributed on an "AS IS" basis,
++ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++ * for the specific language governing rights and limitations under the
++ * License.
++ *
++ * The Original Code is Mozilla Communicator client code.
++ *
++ * The Initial Developer of the Original Code is
++ * Netscape Communications Corporation.
++ * Portions created by the Initial Developer are Copyright (C) 1998
++ * the Initial Developer. All Rights Reserved.
++ *
++ * Contributor(s):
++ *
++ * Alternatively, the contents of this file may be used under the terms of
++ * either the GNU General Public License Version 2 or later (the "GPL"), or
++ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * in which case the provisions of the GPL or the LGPL are applicable instead
++ * of those above. If you wish to allow use of your version of this file only
++ * under the terms of either the GPL or the LGPL, and not to allow others to
++ * use your version of this file under the terms of the MPL, indicate your
++ * decision by deleting the provisions above and replace them with the notice
++ * and other provisions required by the GPL or the LGPL. If you do not delete
++ * the provisions above, a recipient may use your version of this file under
++ * the terms of any one of the MPL, the GPL or the LGPL.
++ *
++ * ***** END LICENSE BLOCK ***** */
++
++#ifndef nsUniversalDetector_h__
++#define nsUniversalDetector_h__
++
++class nsCharSetProber;
++
++#define NUM_OF_CHARSET_PROBERS  3
++
++typedef enum {
++  ePureAscii = 0,
++  eEscAscii  = 1,
++  eHighbyte  = 2
++} nsInputState;
++
++class nsUniversalDetector {
++public:
++   nsUniversalDetector();
++   virtual ~nsUniversalDetector();
++   virtual nsresult HandleData(const char* aBuf, PRUint32 aLen);
++   virtual void DataEnd(void);
++
++protected:
++   virtual void Report(const char* aCharset) = 0;
++   virtual void Reset();
++   nsInputState  mInputState;
++   PRBool  mDone;
++   PRBool  mInTag;
++   PRBool  mStart;
++   PRBool  mGotData;
++   char    mLastChar;
++   const char *  mDetectedCharset;
++   PRInt32 mBestGuess;
++
++   nsCharSetProber  *mCharSetProbers[NUM_OF_CHARSET_PROBERS];
++   nsCharSetProber  *mEscCharSetProber;
++};
++
++#endif
++
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/lib/IncludeTester.pm perl-5.10.1/lib/ExtUtils/ParseXS/t/lib/IncludeTester.pm
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/lib/IncludeTester.pm	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/lib/IncludeTester.pm	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,20 @@
++package IncludeTester;
++use strict;
++
++sub print_xs {
++  print <<'HERE';
++
++int
++sum(a, b)
++    int a
++    int b
++  CODE:
++    RETVAL = a + b;
++  OUTPUT:
++    RETVAL
++
++HERE
++}
++
++1;
++
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/more.t perl-5.10.1/lib/ExtUtils/ParseXS/t/more.t
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/more.t	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/more.t	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,110 @@
++#!/usr/bin/perl
++
++use strict;
++use Test::More;
++use Config;
++use DynaLoader;
++use ExtUtils::CBuilder;
++use attributes;
++use overload;
++
++plan tests => 25;
++
++my ($source_file, $obj_file, $lib_file);
++
++require_ok( 'ExtUtils::ParseXS' );
++ExtUtils::ParseXS->import('process_file');
++
++chdir 't' or die "Can't chdir to t/, $!";
++
++use Carp; $SIG{__WARN__} = \&Carp::cluck;
++
++#########################
++
++$source_file = 'XSMore.c';
++
++# Try sending to file
++ExtUtils::ParseXS->process_file(
++	filename => 'XSMore.xs',
++	output   => $source_file,
++);
++ok -e $source_file, "Create an output file";
++
++my $quiet = $ENV{PERL_CORE} && !$ENV{HARNESS_ACTIVE};
++my $b = ExtUtils::CBuilder->new(quiet => $quiet);
++
++SKIP: {
++  skip "no compiler available", 2
++    if ! $b->have_compiler;
++  $obj_file = $b->compile( source => $source_file );
++  ok $obj_file;
++  ok -e $obj_file, "Make sure $obj_file exists";
++}
++
++SKIP: {
++  skip "no dynamic loading", 6
++    if !$b->have_compiler || !$Config{usedl};
++  my $module = 'XSMore';
++  $lib_file = $b->link( objects => $obj_file, module_name => $module );
++  ok $lib_file;
++  ok -e $lib_file,  "Make sure $lib_file exists";
++
++  eval{
++    package XSMore;
++    our $VERSION = 42;
++    our $boot_ok;
++    DynaLoader::bootstrap_inherit(__PACKAGE__, $VERSION); # VERSIONCHECK disabled
++
++    sub new{ bless {}, shift }
++  };
++  is $@, '';
++  is ExtUtils::ParseXS::errors(), 0, 'ExtUtils::ParseXS::errors()';
++
++  is $XSMore::boot_ok, 100, 'the BOOT keyword';
++
++  ok XSMore::include_ok(), 'the INCLUDE keyword';
++  is prototype(\&XSMore::include_ok), "", 'the PROTOTYPES keyword';
++
++  is prototype(\&XSMore::prototype_ssa), '$$@', 'the PROTOTYPE keyword';
++
++  is_deeply [attributes::get(\&XSMore::attr_method)], [qw(method)], 'the ATTRS keyword';
++  is prototype(\&XSMore::attr_method), '$;@', 'ATTRS with prototype';
++
++  is XSMore::return_1(), 1, 'the CASE keyword (1)';
++  is XSMore::return_2(), 2, 'the CASE keyword (2)';
++  is prototype(\&XSMore::return_1), "", 'ALIAS with prototype (1)';
++  is prototype(\&XSMore::return_2), "", 'ALIAS with prototype (2)';
++
++  is XSMore::arg_init(200), 200, 'argument init';
++
++  ok overload::Overloaded(XSMore->new), 'the FALLBACK keyword';
++  is abs(XSMore->new), 42, 'the OVERLOAD keyword';
++
++  my @a;
++  XSMore::hook(\@a);
++  is_deeply \@a, [qw(INIT CODE POSTCALL CLEANUP)], 'the INIT & POSTCALL & CLEANUP keywords';
++
++  is_deeply [XSMore::outlist()], [ord('a'), ord('b')], 'the OUTLIST keyword';
++
++  is XSMore::len("foo"), 3, 'the length keyword';
++
++  is XSMore::sum(5, 9), 14, 'the INCLUDE_COMMAND directive';
++
++  # Win32 needs to close the DLL before it can unlink it, but unfortunately
++  # dl_unload_file was missing on Win32 prior to perl change #24679!
++  if ($^O eq 'MSWin32' and defined &DynaLoader::dl_unload_file) {
++    for (my $i = 0; $i < @DynaLoader::dl_modules; $i++) {
++      if ($DynaLoader::dl_modules[$i] eq $module) {
++        DynaLoader::dl_unload_file($DynaLoader::dl_librefs[$i]);
++        last;
++      }
++    }
++  }
++}
++
++unless ($ENV{PERL_NO_CLEANUP}) {
++  for ( $obj_file, $lib_file, $source_file) {
++    next unless defined $_;
++    1 while unlink $_;
++  }
++}
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/typemap perl-5.10.1/lib/ExtUtils/ParseXS/t/typemap
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/typemap	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/typemap	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,336 @@
++# basic C types
++int			T_IV
++unsigned		T_UV
++unsigned int		T_UV
++long			T_IV
++unsigned long		T_UV
++short			T_IV
++unsigned short		T_UV
++char			T_CHAR
++unsigned char		T_U_CHAR
++char *			T_PV
++unsigned char *		T_PV
++const char *		T_PV
++caddr_t			T_PV
++wchar_t *		T_PV
++wchar_t			T_IV
++# bool_t is defined in <rpc/rpc.h>
++bool_t			T_IV
++size_t			T_UV
++ssize_t			T_IV
++time_t			T_NV
++unsigned long *		T_OPAQUEPTR
++char **			T_PACKEDARRAY
++void *			T_PTR
++Time_t *		T_PV
++SV *			T_SV
++SVREF			T_SVREF
++AV *			T_AVREF
++HV *			T_HVREF
++CV *			T_CVREF
++
++IV			T_IV
++UV			T_UV
++NV                      T_NV
++I32			T_IV
++I16			T_IV
++I8			T_IV
++STRLEN			T_UV
++U32			T_U_LONG
++U16			T_U_SHORT
++U8			T_UV
++Result			T_U_CHAR
++Boolean			T_BOOL
++float                   T_FLOAT
++double			T_DOUBLE
++SysRet			T_SYSRET
++SysRetLong		T_SYSRET
++FILE *			T_STDIO
++PerlIO *		T_INOUT
++FileHandle		T_PTROBJ
++InputStream		T_IN
++InOutStream		T_INOUT
++OutputStream		T_OUT
++bool			T_BOOL
++
++#############################################################################
++INPUT
++T_SV
++	$var = $arg
++T_SVREF
++	if (SvROK($arg))
++	    $var = (SV*)SvRV($arg);
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not a reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_AVREF
++	if (SvROK($arg) && SvTYPE(SvRV($arg))==SVt_PVAV)
++	    $var = (AV*)SvRV($arg);
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not an array reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_HVREF
++	if (SvROK($arg) && SvTYPE(SvRV($arg))==SVt_PVHV)
++	    $var = (HV*)SvRV($arg);
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not a hash reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_CVREF
++	if (SvROK($arg) && SvTYPE(SvRV($arg))==SVt_PVCV)
++	    $var = (CV*)SvRV($arg);
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not a code reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_SYSRET
++	$var NOT IMPLEMENTED
++T_UV
++	$var = ($type)SvUV($arg)
++T_IV
++	$var = ($type)SvIV($arg)
++T_INT
++	$var = (int)SvIV($arg)
++T_ENUM
++	$var = ($type)SvIV($arg)
++T_BOOL
++	$var = (bool)SvTRUE($arg)
++T_U_INT
++	$var = (unsigned int)SvUV($arg)
++T_SHORT
++	$var = (short)SvIV($arg)
++T_U_SHORT
++	$var = (unsigned short)SvUV($arg)
++T_LONG
++	$var = (long)SvIV($arg)
++T_U_LONG
++	$var = (unsigned long)SvUV($arg)
++T_CHAR
++	$var = (char)*SvPV_nolen($arg)
++T_U_CHAR
++	$var = (unsigned char)SvUV($arg)
++T_FLOAT
++	$var = (float)SvNV($arg)
++T_NV
++	$var = ($type)SvNV($arg)
++T_DOUBLE
++	$var = (double)SvNV($arg)
++T_PV
++	$var = ($type)SvPV_nolen($arg)
++T_PTR
++	$var = INT2PTR($type,SvIV($arg))
++T_PTRREF
++	if (SvROK($arg)) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = INT2PTR($type,tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not a reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_REF_IV_REF
++	if (sv_isa($arg, \"${ntype}\")) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = *INT2PTR($type *, tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not of type %s\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\", \"$ntype\")
++T_REF_IV_PTR
++	if (sv_isa($arg, \"${ntype}\")) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = INT2PTR($type, tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not of type %s\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\", \"$ntype\")
++T_PTROBJ
++	if (sv_derived_from($arg, \"${ntype}\")) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = INT2PTR($type,tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not of type %s\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\", \"$ntype\")
++T_PTRDESC
++	if (sv_isa($arg, \"${ntype}\")) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    ${type}_desc = (\U${type}_DESC\E*) tmp;
++	    $var = ${type}_desc->ptr;
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not of type %s\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\", \"$ntype\")
++T_REFREF
++	if (SvROK($arg)) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = *INT2PTR($type,tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not a reference\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\")
++T_REFOBJ
++	if (sv_isa($arg, \"${ntype}\")) {
++	    IV tmp = SvIV((SV*)SvRV($arg));
++	    $var = *INT2PTR($type,tmp);
++	}
++	else
++	    Perl_croak(aTHX_ \"%s: %s is not of type %s\",
++			${$ALIAS?\q[GvNAME(CvGV(cv))]:\qq[\"$pname\"]},
++			\"$var\", \"$ntype\")
++T_OPAQUE
++	$var = *($type *)SvPV_nolen($arg)
++T_OPAQUEPTR
++	$var = ($type)SvPV_nolen($arg)
++T_PACKED
++	$var = XS_unpack_$ntype($arg)
++T_PACKEDARRAY
++	$var = XS_unpack_$ntype($arg)
++T_CALLBACK
++	$var = make_perl_cb_$type($arg)
++T_ARRAY
++	U32 ix_$var = $argoff;
++	$var = $ntype(items -= $argoff);
++	while (items--) {
++	    DO_ARRAY_ELEM;
++	    ix_$var++;
++	}
++        /* this is the number of elements in the array */
++        ix_$var -= $argoff
++T_STDIO
++	$var = PerlIO_findFILE(IoIFP(sv_2io($arg)))
++T_IN
++	$var = IoIFP(sv_2io($arg))
++T_INOUT
++	$var = IoIFP(sv_2io($arg))
++T_OUT
++	$var = IoOFP(sv_2io($arg))
++#############################################################################
++OUTPUT
++T_SV
++	$arg = $var;
++T_SVREF
++	$arg = newRV((SV*)$var);
++T_AVREF
++	$arg = newRV((SV*)$var);
++T_HVREF
++	$arg = newRV((SV*)$var);
++T_CVREF
++	$arg = newRV((SV*)$var);
++T_IV
++	sv_setiv($arg, (IV)$var);
++T_UV
++	sv_setuv($arg, (UV)$var);
++T_INT
++	sv_setiv($arg, (IV)$var);
++T_SYSRET
++	if ($var != -1) {
++	    if ($var == 0)
++		sv_setpvn($arg, "0 but true", 10);
++	    else
++		sv_setiv($arg, (IV)$var);
++	}
++T_ENUM
++	sv_setiv($arg, (IV)$var);
++T_BOOL
++	$arg = boolSV($var);
++T_U_INT
++	sv_setuv($arg, (UV)$var);
++T_SHORT
++	sv_setiv($arg, (IV)$var);
++T_U_SHORT
++	sv_setuv($arg, (UV)$var);
++T_LONG
++	sv_setiv($arg, (IV)$var);
++T_U_LONG
++	sv_setuv($arg, (UV)$var);
++T_CHAR
++	sv_setpvn($arg, (char *)&$var, 1);
++T_U_CHAR
++	sv_setuv($arg, (UV)$var);
++T_FLOAT
++	sv_setnv($arg, (double)$var);
++T_NV
++	sv_setnv($arg, (NV)$var);
++T_DOUBLE
++	sv_setnv($arg, (double)$var);
++T_PV
++	sv_setpv((SV*)$arg, $var);
++T_PTR
++	sv_setiv($arg, PTR2IV($var));
++T_PTRREF
++	sv_setref_pv($arg, Nullch, (void*)$var);
++T_REF_IV_REF
++	sv_setref_pv($arg, \"${ntype}\", (void*)new $ntype($var));
++T_REF_IV_PTR
++	sv_setref_pv($arg, \"${ntype}\", (void*)$var);
++T_PTROBJ
++	sv_setref_pv($arg, \"${ntype}\", (void*)$var);
++T_PTRDESC
++	sv_setref_pv($arg, \"${ntype}\", (void*)new\U${type}_DESC\E($var));
++T_REFREF
++	NOT_IMPLEMENTED
++T_REFOBJ
++	NOT IMPLEMENTED
++T_OPAQUE
++	sv_setpvn($arg, (char *)&$var, sizeof($var));
++T_OPAQUEPTR
++	sv_setpvn($arg, (char *)$var, sizeof(*$var));
++T_PACKED
++	XS_pack_$ntype($arg, $var);
++T_PACKEDARRAY
++	XS_pack_$ntype($arg, $var, count_$ntype);
++T_DATAUNIT	
++	sv_setpvn($arg, $var.chp(), $var.size());
++T_CALLBACK
++	sv_setpvn($arg, $var.context.value().chp(),
++		$var.context.value().size());
++T_ARRAY
++        {
++	    U32 ix_$var;
++	    EXTEND(SP,size_$var);
++	    for (ix_$var = 0; ix_$var < size_$var; ix_$var++) {
++		ST(ix_$var) = sv_newmortal();
++	DO_ARRAY_ELEM
++	    }
++        }
++T_STDIO
++	{
++	    GV *gv = newGVgen("$Package");
++	    PerlIO *fp = PerlIO_importFILE($var,0);
++	    if ( fp && do_open(gv, "+<&", 3, FALSE, 0, 0, fp) )
++		sv_setsv($arg, sv_bless(newRV((SV*)gv), gv_stashpv("$Package",1)));
++	    else
++		$arg = &PL_sv_undef;
++	}
++T_IN
++	{
++	    GV *gv = newGVgen("$Package");
++	    if ( do_open(gv, "<&", 2, FALSE, 0, 0, $var) )
++		sv_setsv($arg, sv_bless(newRV((SV*)gv), gv_stashpv("$Package",1)));
++	    else
++		$arg = &PL_sv_undef;
++	}
++T_INOUT
++	{
++	    GV *gv = newGVgen("$Package");
++	    if ( do_open(gv, "+<&", 3, FALSE, 0, 0, $var) )
++		sv_setsv($arg, sv_bless(newRV((SV*)gv), gv_stashpv("$Package",1)));
++	    else
++		$arg = &PL_sv_undef;
++	}
++T_OUT
++	{
++	    GV *gv = newGVgen("$Package");
++	    if ( do_open(gv, "+>&", 3, FALSE, 0, 0, $var) )
++		sv_setsv($arg, sv_bless(newRV((SV*)gv), gv_stashpv("$Package",1)));
++	    else
++		$arg = &PL_sv_undef;
++	}
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/XSInclude.xsh perl-5.10.1/lib/ExtUtils/ParseXS/t/XSInclude.xsh
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/XSInclude.xsh	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/XSInclude.xsh	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,10 @@
++
++# Testing the INCLUDE keyword
++
++int
++include_ok()
++CODE:
++	RETVAL = 1;
++OUTPUT:
++	RETVAL
++
+diff -urN perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/XSMore.xs perl-5.10.1/lib/ExtUtils/ParseXS/t/XSMore.xs
+--- perl-5.10.1/lib/ExtUtils/ParseXS/t.xxx/XSMore.xs	1970-01-01 01:00:00.000000000 +0100
++++ perl-5.10.1/lib/ExtUtils/ParseXS/t/XSMore.xs	2010-02-11 20:03:54.000000000 +0100
+@@ -0,0 +1,119 @@
++#include "EXTERN.h"
++#include "perl.h"
++#include "XSUB.h"
++
++=for testing
++
++This parts are ignored.
++
++=cut
++
++STATIC void
++outlist(int* a, int* b){
++	*a = 'a';
++	*b = 'b';
++}
++
++STATIC int
++len(const char* const s, int const l){
++	return l;
++}
++
++MODULE = XSMore         PACKAGE = XSMore
++
++=for testing
++
++This parts are also ignored.
++
++=cut
++
++PROTOTYPES: ENABLE
++
++VERSIONCHECK: DISABLE
++
++REQUIRE: 2.20
++
++SCOPE: DISABLE
++
++FALLBACK: TRUE
++
++BOOT:
++	sv_setiv(get_sv("XSMore::boot_ok", TRUE), 100);
++
++
++void
++prototype_ssa()
++PROTOTYPE: $$@
++CODE:
++	NOOP;
++
++void
++attr_method(self, ...)
++ATTRS: method
++CODE:
++	NOOP;
++
++#define RET_1 1
++#define RET_2 2
++
++int
++return_1()
++CASE: ix == 1
++	ALIAS:
++		return_1 = RET_1
++		return_2 = RET_2
++	CODE:
++		RETVAL = ix;
++	OUTPUT:
++		RETVAL
++CASE: ix == 2
++	CODE:
++		RETVAL = ix;
++	OUTPUT:
++		RETVAL
++
++int
++arg_init(x)
++	int x = SvIV($arg);
++CODE:
++	RETVAL = x;
++OUTPUT:
++	RETVAL
++
++int
++myabs(...)
++OVERLOAD: abs
++CODE:
++	RETVAL = 42;
++OUTPUT:
++	RETVAL
++
++void
++hook(IN AV* av)
++INIT:
++	av_push(av, newSVpv("INIT", 0));
++CODE:
++	av_push(av, newSVpv("CODE", 0));
++POSTCALL:
++	av_push(av, newSVpv("POSTCALL", 0));
++CLEANUP:
++	av_push(av, newSVpv("CLEANUP", 0));
++
++
++void
++outlist(OUTLIST int a, OUTLIST int b)
++
++int
++len(char* s, int length(s))
++
++INCLUDE_COMMAND: $^X -Ilib -It/lib -MIncludeTester -e IncludeTester::print_xs
++
++#if 1
++
++INCLUDE: XSInclude.xsh
++
++#else
++
++# for testing #else directive
++
++#endif

@@ -1,0 +1,106 @@
+diff -up perl-5.10.1/lib/Archive/Extract.pm.ooo perl-5.10.1/lib/Archive/Extract.pm
+--- perl-5.10.1/lib/Archive/Extract.pm.ooo	2009-06-27 19:11:16.000000000 +0200
++++ perl-5.10.1/lib/Archive/Extract.pm	2010-01-07 00:48:27.000000000 +0100
+@@ -2,7 +2,7 @@ package Archive::Extract;
+ 
+ use strict;
+ 
+-use Cwd                         qw[cwd];
++use Cwd                         qw[cwd chdir];
+ use Carp                        qw[carp];
+ use IPC::Cmd                    qw[run can_run];
+ use FileHandle;
+@@ -41,7 +41,7 @@ use vars qw[$VERSION $PREFER_BIN $PROGRA
+             $_ALLOW_BIN $_ALLOW_PURE_PERL $_ALLOW_TAR_ITER
+          ];
+ 
+-$VERSION            = '0.34';
++$VERSION            = '0.38';
+ $PREFER_BIN         = 0;
+ $WARN               = 1;
+ $DEBUG              = 0;
+@@ -899,7 +899,7 @@ sub _gunzip_bin {
+         $self->_error( $self->_no_buffer_content( $self->archive ) );
+     }
+ 
+-    print $fh $buffer if defined $buffer;
++    $self->_print($fh, $buffer) if defined $buffer;
+ 
+     close $fh;
+ 
+@@ -929,7 +929,7 @@ sub _gunzip_cz {
+                             $self->_gunzip_to, $! ));
+ 
+     my $buffer;
+-    $fh->print($buffer) while $gz->gzread($buffer) > 0;
++    $self->_print($fh, $buffer) while $gz->gzread($buffer) > 0;
+     $fh->close;
+ 
+     ### set what files where extract, and where they went ###
+@@ -974,7 +974,7 @@ sub _uncompress_bin {
+         $self->_error( $self->_no_buffer_content( $self->archive ) );
+     }
+ 
+-    print $fh $buffer if defined $buffer;
++    $self->_print($fh, $buffer) if defined $buffer;
+ 
+     close $fh;
+ 
+@@ -1190,7 +1190,7 @@ sub _bunzip2_bin {
+         $self->_error( $self->_no_buffer_content( $self->archive ) );
+     }
+     
+-    print $fh $buffer if defined $buffer;
++    $self->_print($fh, $buffer) if defined $buffer;
+ 
+     close $fh;
+ 
+@@ -1292,7 +1292,7 @@ sub _unlzma_bin {
+         $self->_error( $self->_no_buffer_content( $self->archive ) );
+     }
+ 
+-    print $fh $buffer if defined $buffer;
++    $self->_print($fh, $buffer) if defined $buffer;
+ 
+     close $fh;
+ 
+@@ -1324,7 +1324,7 @@ sub _unlzma_cz {
+                                     $self->archive, $@));
+     }
+ 
+-    print $fh $buffer if defined $buffer;
++    $self->_print($fh, $buffer) if defined $buffer;
+ 
+     close $fh;
+ 
+@@ -1341,6 +1341,15 @@ sub _unlzma_cz {
+ #
+ #################################
+ 
++# For printing binaries that avoids interfering globals
++sub _print {
++    my $self = shift;
++    my $fh = shift;
++
++    local( $\, $", $, ) = ( undef, ' ', '' );
++    return print $fh @_;
++}
++
+ sub _error {
+     my $self    = shift;
+     my $error   = shift;
+diff -up perl-5.10.1/lib/Archive/Extract/t/01_Archive-Extract.t.ooo perl-5.10.1/lib/Archive/Extract/t/01_Archive-Extract.t
+--- perl-5.10.1/lib/Archive/Extract/t/01_Archive-Extract.t.ooo	2009-06-27 19:11:16.000000000 +0200
++++ perl-5.10.1/lib/Archive/Extract/t/01_Archive-Extract.t	2010-01-07 00:47:14.000000000 +0100
+@@ -65,6 +65,11 @@ $Archive::Extract::WARN     = $Archive::
+ 
+ diag( "\n\n*** DEBUG INFORMATION ENABLED ***\n\n" ) if $Debug;
+ 
++# Be as evil as possible to print
++$\ = "ORS_FLAG";
++$, = "OFS_FLAG";
++$" = "LISTSEP_FLAG";
++
+ my $tmpl = {
+     ### plain files
+     'x.bz2' => {    programs    => [qw[bunzip2]],

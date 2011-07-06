@@ -1,0 +1,30 @@
+diff -up perl-5.10.1/MANIFEST.fest perl-5.10.1/MANIFEST
+--- perl-5.10.1/MANIFEST.fest	2010-06-15 11:35:55.337965333 +0200
++++ perl-5.10.1/MANIFEST	2010-06-15 15:08:14.925966550 +0200
+@@ -1907,7 +1907,6 @@ lib/CGI/eg/cookie.cgi		CGI example
+ lib/CGI/eg/crash.cgi		CGI example
+ lib/CGI/eg/customize.cgi	CGI example
+ lib/CGI/eg/diff_upload.cgi	CGI example
+-lib/CGI/eg/dna_small_gif.uu	Small image for CGI examples
+ lib/CGI/eg/file_upload.cgi	CGI example
+ lib/CGI/eg/frameset.cgi		CGI example
+ lib/CGI/eg/index.html		Index page for CGI examples
+@@ -1919,10 +1918,8 @@ lib/CGI/eg/multiple_forms.cgi	CGI exampl
+ lib/CGI/eg/nph-clock.cgi	CGI example
+ lib/CGI/eg/nph-multipart.cgi	CGI example
+ lib/CGI/eg/popup.cgi		CGI example
+-lib/CGI/eg/RunMeFirst		Setup script for CGI examples
+ lib/CGI/eg/save_state.cgi	CGI example
+ lib/CGI/eg/tryit.cgi		CGI example
+-lib/CGI/eg/wilogo_gif.uu	CGI example
+ lib/CGI/Fast.pm			Support for FastCGI (persistent server process)
+ lib/CGI.pm			Web server interface ("Common Gateway Interface")
+ lib/CGI/Pretty.pm		Output nicely formatted HTML
+@@ -1945,7 +1942,6 @@ lib/CGI/t/start_end_end.t	See if CGI.pm 
+ lib/CGI/t/start_end_start.t	See if CGI.pm works
+ lib/CGI/t/switch.t		See if CGI::Switch still loads
+ lib/CGI/t/uploadInfo.t		See if CGI.pm works
+-lib/CGI/t/upload_post_text.txt.packed	Test data for CGI.pm
+ lib/CGI/t/upload.t		See if CGI.pm works
+ lib/CGI/t/util-58.t		See if 5.8-dependent features work
+ lib/CGI/t/util.t		See if CGI.pm works

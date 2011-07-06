@@ -1,0 +1,97 @@
+--- perl-5.10.1/ext/Time-HiRes.bbb/Changes	2009-04-14 20:30:58.000000000 +0200
++++ perl-5.10.1/ext/Time-HiRes/Changes	2010-03-17 22:16:42.000000000 +0100
+@@ -1,5 +1,15 @@
+ Revision history for the Perl extension Time::HiRes.
+ 
++1.9721 [2010-03-17]
++	- Address [rt.cpan.org #54196] alarm and ularm return values are bogus,
++	  additional fix from Gisle Aas
++	- Address [rt.cpan.org #55665] "Bad plan" on Windows,
++	  report and fix from Jan Dubois
++
++1.9720 [2010-02-14]
++	- Address [rt.cpan.org #54196] alarm and ularm return values are bogus,
++	  report and fix from Nicholas Clark
++
+ 1.9719	[2009-01-04]
+ 	- As with QNX, Haiku has the API of interval timers but not
+ 	  the implementation (bleadperl change #34630), hence skip
+--- perl-5.10.1/ext/Time-HiRes.bbb/HiRes.pm	2009-04-14 20:30:58.000000000 +0200
++++ perl-5.10.1/ext/Time-HiRes/HiRes.pm	2010-03-17 22:13:22.000000000 +0100
+@@ -23,7 +23,7 @@ require DynaLoader;
+ 		 stat
+ 		);
+ 
+-$VERSION = '1.9719';
++$VERSION = '1.9721';
+ $XS_VERSION = $VERSION;
+ $VERSION = eval $VERSION;
+ 
+--- perl-5.10.1/ext/Time-HiRes.bbb/HiRes.xs	2009-04-14 20:30:58.000000000 +0200
++++ perl-5.10.1/ext/Time-HiRes/HiRes.xs	2010-02-13 01:48:56.000000000 +0100
+@@ -2,7 +2,7 @@
+  * 
+  * Copyright (c) 1996-2002 Douglas E. Wegscheid.  All rights reserved.
+  * 
+- * Copyright (c) 2002,2003,2004,2005,2006,2007,2008 Jarkko Hietaniemi.
++ * Copyright (c) 2002-2010 Jarkko Hietaniemi.
+  * All rights reserved.
+  * 
+  * This program is free software; you can redistribute it and/or modify
+@@ -461,20 +461,20 @@ hrt_usleep(unsigned long usec)
+ #if defined(HAS_SETITIMER) && defined(ITIMER_REAL)
+ 
+ static int
+-hrt_ualarm_itimero(struct itimerval* itv, int usec, int uinterval)
++hrt_ualarm_itimero(struct itimerval *oitv, int usec, int uinterval)
+ {
+-   itv->it_value.tv_sec = usec / IV_1E6;
+-   itv->it_value.tv_usec = usec % IV_1E6;
+-   itv->it_interval.tv_sec = uinterval / IV_1E6;
+-   itv->it_interval.tv_usec = uinterval % IV_1E6;
+-   return setitimer(ITIMER_REAL, itv, 0);
++   struct itimerval itv;
++   itv.it_value.tv_sec = usec / IV_1E6;
++   itv.it_value.tv_usec = usec % IV_1E6;
++   itv.it_interval.tv_sec = uinterval / IV_1E6;
++   itv.it_interval.tv_usec = uinterval % IV_1E6;
++   return setitimer(ITIMER_REAL, &itv, oitv);
+ }
+ 
+ int
+ hrt_ualarm_itimer(int usec, int uinterval)
+ {
+-  struct itimerval itv;
+-  return hrt_ualarm_itimero(&itv, usec, uinterval);
++  return hrt_ualarm_itimero(NULL, usec, uinterval);
+ }
+ 
+ #ifdef HAS_UALARM
+@@ -914,9 +914,11 @@ ualarm(useconds,uinterval=0)
+ 	  {
+ 	        struct itimerval itv;
+ 	        if (hrt_ualarm_itimero(&itv, useconds, uinterval)) {
+-		  RETVAL = itv.it_value.tv_sec + IV_1E6 * itv.it_value.tv_usec;
+-		} else {
++		  /* To conform to ualarm's interface, we're actually ignoring
++		     an error here.  */
+ 		  RETVAL = 0;
++		} else {
++		  RETVAL = itv.it_value.tv_sec * IV_1E6 + itv.it_value.tv_usec;
+ 		}
+ 	  }
+ #else
+@@ -942,9 +944,11 @@ alarm(seconds,interval=0)
+ 	  {
+ 	        struct itimerval itv;
+ 	        if (hrt_ualarm_itimero(&itv, useconds, uinterval)) {
+-		  RETVAL = (NV)itv.it_value.tv_sec + (NV)itv.it_value.tv_usec / NV_1E6;
+-		} else {
++		  /* To conform to alarm's interface, we're actually ignoring
++		     an error here.  */
+ 		  RETVAL = 0;
++		} else {
++		  RETVAL = itv.it_value.tv_sec + ((NV)itv.it_value.tv_usec) / NV_1E6;
+ 		}
+ 	  }
+ #else
