@@ -21,5 +21,7 @@ $(SOURCEFILES):
 
 	sha256sum -c sources || ( echo 'SHA256 check failed' && rm $(SOURCEFILES); exit 1 )
 
+	chmod +x filter-requires.sh
+
 clean:
 	rm $(SOURCEFILES)
